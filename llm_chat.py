@@ -6,7 +6,7 @@ Uses LangChain's init_chat_model to support OpenAI, Azure OpenAI, Anthropic, Oll
 import json
 import os
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -39,7 +39,8 @@ _API_KEY_KWARG = {
 @dataclass
 class LLMConfig:
     provider: str = ""       # e.g. openai, azure_openai, anthropic, ollama, groq ...
-    model: str = ""          # model name or Azure deployment name
+    model: str = ""          # currently active model name or Azure deployment name
+    models: List[str] = field(default_factory=list)  # all selectable models for this provider
     api_key: str = ""        # omit for local providers like ollama
     endpoint: str = ""       # azure_openai: Azure endpoint; others: custom base URL
     api_version: str = "2024-02-15-preview"  # for azure_openai
@@ -215,7 +216,8 @@ def clear_chat_history(book_id: str, conv_id: Optional[str] = None):
         os.remove(path)
 
 
-def _build_llm(config: LLMConfig):
+def _build_llm(config: LLMConfig, model_override: Optional[str] = None):
+    model = model_override or config.model
     kwargs: Dict = {"temperature": 0.7, "max_tokens": 1024}
     if config.api_key and config.provider not in _CREDENTIAL_PROVIDERS:
         kwarg = _API_KEY_KWARG.get(config.provider, "api_key")
@@ -226,7 +228,7 @@ def _build_llm(config: LLMConfig):
             kwargs["api_version"] = config.api_version
         else:
             kwargs["base_url"] = config.endpoint
-    return init_chat_model(config.model, model_provider=config.provider, **kwargs)
+    return init_chat_model(model, model_provider=config.provider, **kwargs)
 
 
 def _to_lc_messages(messages: List[Dict[str, str]]):
@@ -251,11 +253,11 @@ async def chat_completion(config: LLMConfig, messages: List[Dict[str, str]]) -> 
     return response.content
 
 
-async def chat_completion_stream(config: LLMConfig, messages: List[Dict[str, str]]):
+async def chat_completion_stream(config: LLMConfig, messages: List[Dict[str, str]], model_override: Optional[str] = None):
     """Stream LLM response token by token via LangChain init_chat_model."""
     if not config.is_configured:
         raise ValueError("LLM is not configured. Click the gear icon to set up.")
-    llm = _build_llm(config)
+    llm = _build_llm(config, model_override)
     async for chunk in llm.astream(_to_lc_messages(messages)):
         if chunk.content:
             yield chunk.content

@@ -508,6 +508,7 @@
     .chat-input-area {
         padding: 10px 14px 16px;
         flex-shrink: 0;
+        position: relative;
     }
 
     /* Text-selection quote chip (appears above input box) */
@@ -607,6 +608,65 @@
         justify-content: flex-end;
         padding: 6px 10px 10px;
     }
+    /* Custom model picker — absolutely positioned over bottom-left of input box */
+    .chat-model-picker {
+        position: absolute;
+        bottom: 30px;
+        left: 28px;
+        z-index: 10;
+    }
+    .chat-model-trigger {
+        display: flex; align-items: center; gap: 3px;
+        background: none; border: none; cursor: pointer;
+        color: var(--text-muted); font-size: 0.78em; font-family: inherit;
+        padding: 2px 4px; border-radius: 5px;
+        transition: background 0.12s, color 0.12s;
+        white-space: nowrap; line-height: 1;
+    }
+    .chat-model-trigger:hover { background: rgba(0,0,0,0.05); color: var(--text-secondary); }
+    html.dark .chat-model-trigger { color: #555; }
+    html.dark .chat-model-trigger:hover { background: rgba(255,255,255,0.05); color: #888; }
+    .chat-model-trigger svg { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
+    .chat-model-picker.open .chat-model-trigger svg { transform: rotate(180deg); }
+    .chat-model-dropdown {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 0;
+        min-width: 140px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        padding: 4px;
+        z-index: 300;
+    }
+    html.dark .chat-model-dropdown { background: #1e1e1e; border-color: #2e2e2e; box-shadow: 0 6px 24px rgba(0,0,0,0.45); }
+    .chat-model-picker.open .chat-model-dropdown { display: block; }
+    .chat-model-option {
+        display: block; width: 100%; box-sizing: border-box;
+        padding: 7px 10px; background: none; border: none; cursor: pointer;
+        text-align: left; font-size: 0.82em; font-family: inherit;
+        color: var(--text-primary); border-radius: 7px;
+        transition: background 0.1s; white-space: nowrap;
+    }
+    .chat-model-option:hover { background: rgba(0,0,0,0.05); }
+    html.dark .chat-model-option:hover { background: rgba(255,255,255,0.06); }
+    .chat-model-option.active { color: var(--accent); font-weight: 500; }
+    /* Model tags in settings modal */
+    .model-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 2px; }
+    .model-tag {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 8px; border-radius: 20px;
+        background: rgba(201,115,64,0.1); border: 1px solid rgba(201,115,64,0.3);
+        font-size: 0.82em; color: var(--text-primary);
+    }
+    html.dark .model-tag { background: rgba(201,115,64,0.15); border-color: rgba(201,115,64,0.25); }
+    .model-tag-remove {
+        background: none; border: none; cursor: pointer;
+        color: var(--text-muted); font-size: 14px; padding: 0; line-height: 1;
+    }
+    .model-tag-remove:hover { color: var(--text-primary); }
     .chat-send-btn {
         background: #c97340;
         color: #ffffff;
@@ -932,6 +992,13 @@
                     </button>
                 </div>
             </div>
+            <div class="chat-model-picker" id="chatModelPicker" style="display:none;">
+                <button type="button" class="chat-model-trigger" id="chatModelTrigger">
+                    <span id="chatModelLabel"></span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="chat-model-dropdown" id="chatModelDropdown"></div>
+            </div>
         </div>
 
         <!-- Conversations List Panel -->
@@ -1010,8 +1077,12 @@
                 </select>
             </div>
             <div class="form-group">
-                <label>Model</label>
-                <input type="text" id="settingModel" placeholder="e.g. gpt-4o, claude-3-5-sonnet-20241022">
+                <label>Models</label>
+                <div class="model-tags" id="settingModelTags"></div>
+                <div style="display:flex;gap:6px;margin-top:6px;">
+                    <input type="text" id="settingModelInput" placeholder="e.g. gpt-4o" style="flex:1;">
+                    <button type="button" id="settingModelAdd" class="modal-btn secondary" style="padding:6px 12px;font-size:0.85em;white-space:nowrap;">+ Add</button>
+                </div>
             </div>
             <div class="form-group" id="fgApiKey">
                 <label>API Key</label>
@@ -1466,7 +1537,8 @@
                     chapter_index: currentChapterIndex,
                     message: text,
                     selected_text: quoteContext || undefined,
-                    conv_id: currentConvId
+                    conv_id: currentConvId,
+                    model_override: _currentChatModel || undefined,
                 })
             });
 
@@ -1658,12 +1730,93 @@
     }
     document.getElementById('settingProvider').addEventListener('change', updateSettingsFields);
 
+    // ===== Settings: multi-model management =====
+    let _settingsModels = [];
+
+    function renderSettingModelTags() {
+        const container = document.getElementById('settingModelTags');
+        if (!container) return;
+        container.innerHTML = _settingsModels.map((m, i) =>
+            `<span class="model-tag">${m}<button type="button" class="model-tag-remove" data-idx="${i}" title="Remove">×</button></span>`
+        ).join('');
+        container.querySelectorAll('.model-tag-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                _settingsModels.splice(parseInt(btn.dataset.idx), 1);
+                renderSettingModelTags();
+            });
+        });
+    }
+
+    document.getElementById('settingModelAdd').addEventListener('click', () => {
+        const inp = document.getElementById('settingModelInput');
+        const val = inp.value.trim();
+        if (val && !_settingsModels.includes(val)) {
+            _settingsModels.push(val);
+            renderSettingModelTags();
+        }
+        inp.value = '';
+        inp.focus();
+    });
+
+    document.getElementById('settingModelInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('settingModelAdd').click(); }
+    });
+
+    // ===== Custom chat model picker =====
+    let _currentChatModel = '';
+    const _chatModelPicker = document.getElementById('chatModelPicker');
+    const _chatModelTrigger = document.getElementById('chatModelTrigger');
+    const _chatModelDropdown = document.getElementById('chatModelDropdown');
+    const _chatModelLabel = document.getElementById('chatModelLabel');
+
+    function populateChatModelSelect(models) {
+        if (!models.length) { _chatModelPicker.style.display = 'none'; return; }
+        const saved = localStorage.getItem('chat-model');
+        _currentChatModel = models.includes(saved) ? saved : models[0];
+        _chatModelLabel.textContent = _currentChatModel;
+        _chatModelDropdown.innerHTML = models.map(m =>
+            `<button type="button" class="chat-model-option${m === _currentChatModel ? ' active' : ''}" data-model="${m}">${m}</button>`
+        ).join('');
+        _chatModelDropdown.querySelectorAll('.chat-model-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+                _currentChatModel = btn.dataset.model;
+                localStorage.setItem('chat-model', _currentChatModel);
+                _chatModelLabel.textContent = _currentChatModel;
+                _chatModelDropdown.querySelectorAll('.chat-model-option').forEach(b => b.classList.toggle('active', b === btn));
+                _chatModelPicker.classList.remove('open');
+            });
+        });
+        _chatModelPicker.style.display = '';
+    }
+
+    _chatModelTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _chatModelPicker.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+        if (!_chatModelPicker.contains(e.target)) _chatModelPicker.classList.remove('open');
+    });
+
+    // Load models on page init
+    (async () => {
+        try {
+            const resp = await fetch('/api/settings');
+            if (resp.ok) {
+                const data = await resp.json();
+                const models = data.models && data.models.length ? data.models : (data.model ? [data.model] : []);
+                populateChatModelSelect(models);
+            }
+        } catch(e) { /* ignore */ }
+    })();
+
     document.getElementById('chatSettingsBtn').addEventListener('click', async () => {
         try {
             const resp = await fetch('/api/settings');
             const data = await resp.json();
             document.getElementById('settingProvider').value = data.provider || 'azure_openai';
-            document.getElementById('settingModel').value = data.model || '';
+            _settingsModels = data.models && data.models.length ? [...data.models] : (data.model ? [data.model] : []);
+            renderSettingModelTags();
+            document.getElementById('settingModelInput').value = '';
             document.getElementById('settingApiKey').value = '';
             document.getElementById('settingApiKey').placeholder = data.api_key_set ? '••••••••' : 'Enter API key';
             document.getElementById('settingEndpoint').value = data.endpoint || '';
@@ -1680,7 +1833,8 @@
         const status = document.getElementById('settingsStatus');
         const body = {
             provider: document.getElementById('settingProvider').value,
-            model: document.getElementById('settingModel').value,
+            models: _settingsModels,
+            model: _settingsModels[0] || '',
             endpoint: document.getElementById('settingEndpoint').value,
             api_version: document.getElementById('settingApiVersion').value,
         };
@@ -1694,9 +1848,8 @@
                 body: JSON.stringify(body)
             });
             if (resp.ok) {
-                status.textContent = 'Settings saved!';
-                status.style.color = '#27ae60';
-                setTimeout(() => settingsModal.classList.remove('active'), 1000);
+                populateChatModelSelect(_settingsModels);
+                settingsModal.classList.remove('active');
             } else {
                 status.textContent = 'Failed to save settings';
                 status.style.color = '#e74c3c';

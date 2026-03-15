@@ -183,6 +183,7 @@ async def chat_endpoint(request: Request):
     user_message = body.get("message", "").strip()
     selected_text = body.get("selected_text", "").strip()
     conv_id = body.get("conv_id")
+    model_override = body.get("model_override", "").strip() or None
 
     if not book_id or not user_message:
         raise HTTPException(status_code=400, detail="book_id and message are required")
@@ -226,7 +227,7 @@ async def chat_endpoint(request: Request):
     async def generate():
         tokens = []
         try:
-            async for token in chat_completion_stream(config, messages):
+            async for token in chat_completion_stream(config, messages, model_override):
                 tokens.append(token)
                 yield f"data: {json.dumps({'token': token})}\n\n"
         except Exception as e:
@@ -285,6 +286,7 @@ async def get_settings():
     return {
         "provider": config.provider,
         "model": config.model,
+        "models": config.models,
         "api_key_set": bool(config.api_key),
         "endpoint": config.endpoint,
         "api_version": config.api_version,
@@ -297,9 +299,11 @@ async def update_settings(request: Request):
     body = await request.json()
     config = load_config()
 
-    for field in ("provider", "model", "endpoint", "api_version"):
-        if field in body:
-            setattr(config, field, body[field])
+    for key in ("provider", "model", "endpoint", "api_version"):
+        if key in body:
+            setattr(config, key, body[key])
+    if "models" in body and isinstance(body["models"], list):
+        config.models = [str(m) for m in body["models"] if m]
     if "api_key" in body and body["api_key"]:
         config.api_key = body["api_key"]
 
