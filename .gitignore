@@ -12,3 +12,8 @@ wheels/
 # Custom
 *_data/
 *.epub
+*.pdf
+*.mobi
+*.docx
+*.doc
+config.json
