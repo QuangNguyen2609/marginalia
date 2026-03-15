@@ -4,212 +4,410 @@
 
 {% block extra_styles %}
 <style>
+    :root { }  /* absorbs CSS error from nested <style> tag */
+
+    /* ===== Layout ===== */
     .library-container {
-        max-width: 960px;
+        max-width: 1000px;
         margin: 0 auto;
-        padding: 80px 24px 40px;
+        padding: 80px 28px 60px;
     }
 
+    /* ===== Header ===== */
     .library-header {
-        margin-bottom: 32px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 36px;
     }
-    .library-header h1 {
+    .library-header-left h1 {
         font-size: 2em;
         font-weight: 700;
+        letter-spacing: -0.02em;
         margin-bottom: 4px;
+        color: var(--text-primary);
     }
-    .library-header p {
+    .library-header-left p {
         color: var(--text-muted);
-        font-size: 0.95em;
+        font-size: 0.9em;
+    }
+    .library-book-count {
+        font-size: 0.82em;
+        color: var(--text-muted);
+        background: var(--border);
+        padding: 4px 10px;
+        border-radius: 20px;
+        margin-bottom: 2px;
+        white-space: nowrap;
     }
 
-    /* Upload Dropzone */
+    /* ===== Upload Zone ===== */
     .upload-zone {
-        padding: 32px;
+        padding: 28px 32px;
         text-align: center;
-        margin-bottom: 32px;
+        margin-bottom: 36px;
         cursor: pointer;
-        transition: border-color var(--transition), background var(--transition);
+        transition: border-color var(--transition), background var(--transition), transform var(--transition), box-shadow var(--transition);
         border: 2px dashed var(--border);
+        border-radius: var(--radius);
+        position: relative;
+        overflow: hidden;
+    }
+    .upload-zone::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 120%, rgba(201, 115, 64, 0.06) 0%, transparent 70%);
+        opacity: 0;
+        transition: opacity var(--transition);
+        pointer-events: none;
     }
     .upload-zone:hover, .upload-zone.dragover {
         border-color: var(--accent);
-        background: rgba(91, 124, 247, 0.05);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 24px rgba(201, 115, 64, 0.12);
     }
-    .upload-zone svg {
+    .upload-zone:hover::before, .upload-zone.dragover::before {
+        opacity: 1;
+    }
+    .upload-zone.dragover {
+        background: rgba(201, 115, 64, 0.04);
+    }
+
+    .upload-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        background: var(--border);
         color: var(--text-muted);
+        margin-bottom: 14px;
+        transition: background var(--transition), color var(--transition);
+    }
+    .upload-zone:hover .upload-icon, .upload-zone.dragover .upload-icon {
+        background: rgba(201, 115, 64, 0.12);
+        color: var(--accent);
+    }
+
+    .upload-zone .upload-title {
+        font-size: 0.95em;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+    .upload-zone .upload-sub {
+        color: var(--text-secondary);
+        font-size: 0.88em;
         margin-bottom: 12px;
     }
-    .upload-zone p {
-        color: var(--text-secondary);
-        margin-bottom: 8px;
+    .upload-formats {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        flex-wrap: wrap;
     }
-    .upload-zone .hint {
+    .format-pill {
+        font-size: 0.72em;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: var(--border);
         color: var(--text-muted);
-        font-size: 0.85em;
+        text-transform: uppercase;
+        transition: background var(--transition), color var(--transition);
+    }
+    .upload-zone:hover .format-pill {
+        background: rgba(201, 115, 64, 0.1);
+        color: var(--accent);
     }
     .upload-zone input[type="file"] { display: none; }
 
     .upload-progress {
         display: none;
-        margin-top: 12px;
+        margin-top: 14px;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         justify-content: center;
+        color: var(--text-secondary);
+        font-size: 0.9em;
     }
     .upload-progress.active { display: flex; }
     .upload-progress .spinner {
-        width: 20px;
-        height: 20px;
+        width: 18px;
+        height: 18px;
         border: 2px solid var(--border);
         border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .upload-error {
         display: none;
         color: #e74c3c;
-        margin-top: 8px;
-        font-size: 0.9em;
+        margin-top: 10px;
+        font-size: 0.88em;
     }
     .upload-error.active { display: block; }
 
-    /* Book Grid */
+    /* ===== Book Grid ===== */
     .book-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-        gap: 20px;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 18px;
     }
 
     .book-card {
-        padding: 24px;
+        padding: 0;
         transition: transform var(--transition), box-shadow var(--transition);
         cursor: pointer;
         text-decoration: none;
         display: block;
         color: inherit;
+        overflow: hidden;
+        border-radius: var(--radius);
     }
     .book-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+        transform: translateY(-5px);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.14);
         color: inherit;
     }
     html.dark .book-card:hover {
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
     }
 
+    /* Cover */
     .book-cover {
         width: 100%;
-        height: 160px;
-        border-radius: 10px;
-        margin-bottom: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        height: 170px;
         position: relative;
         overflow: hidden;
     }
     .book-cover .cover-bg {
         position: absolute;
         inset: 0;
-        opacity: 0.9;
+        width: 100%;
+        height: 100%;
+    }
+    .cover-shimmer {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 50%);
+        pointer-events: none;
     }
     .book-cover .cover-content {
         position: relative;
         z-index: 1;
-        text-align: center;
-        padding: 16px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px 16px 14px;
+        gap: 8px;
     }
-    .book-cover .cover-content svg {
-        opacity: 0.5;
-        margin-bottom: 6px;
+    .cover-icon {
+        opacity: 0.45;
     }
     .book-cover .cover-title {
-        font-size: 0.85em;
+        font-size: 0.82em;
         font-weight: 700;
         color: white;
         line-height: 1.3;
-        text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        text-align: center;
+        text-shadow: 0 1px 6px rgba(0,0,0,0.35);
         max-height: 3.9em;
         overflow: hidden;
-    }
-    .book-card .book-title {
-        font-size: 1.1em;
-        font-weight: 600;
-        margin-bottom: 6px;
-        line-height: 1.3;
-    }
-    .book-card .book-author {
-        color: var(--text-secondary);
-        font-size: 0.9em;
-        margin-bottom: 12px;
-    }
-    .book-card .book-chapters {
-        color: var(--text-muted);
-        font-size: 0.8em;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
     }
 
+    /* Format badge */
+    .format-badge {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        font-size: 0.68em;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 3px 7px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.3);
+        color: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        z-index: 2;
+    }
+
+    /* Card body */
+    .book-card-body {
+        padding: 14px 16px 16px;
+    }
+    .book-title {
+        font-size: 0.97em;
+        font-weight: 600;
+        margin-bottom: 4px;
+        line-height: 1.3;
+        color: var(--text-primary);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    .book-author {
+        color: var(--text-secondary);
+        font-size: 0.85em;
+        margin-bottom: 10px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .book-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .meta-pill {
+        font-size: 0.74em;
+        color: var(--text-muted);
+        background: var(--border);
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-weight: 500;
+    }
+
+    /* Read arrow appears on hover */
+    .book-card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .read-arrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.78em;
+        font-weight: 600;
+        color: var(--accent);
+        opacity: 0;
+        transform: translateX(-4px);
+        transition: opacity var(--transition), transform var(--transition);
+    }
+    .book-card:hover .read-arrow {
+        opacity: 1;
+        transform: translateX(0);
+    }
+
+    /* ===== Empty State ===== */
     .empty-state {
         text-align: center;
-        padding: 60px 20px;
+        padding: 64px 20px;
         color: var(--text-muted);
     }
-    .empty-state svg {
-        margin-bottom: 16px;
-        opacity: 0.5;
+    .empty-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 72px;
+        height: 72px;
+        border-radius: 20px;
+        background: var(--border);
+        margin-bottom: 20px;
+        opacity: 0.6;
+    }
+    .empty-state h3 {
+        font-size: 1.05em;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
     }
     .empty-state p {
-        margin-bottom: 8px;
+        font-size: 0.9em;
+        margin-bottom: 6px;
+        line-height: 1.6;
     }
     .empty-state code {
         background: var(--border);
         padding: 2px 6px;
-        border-radius: 4px;
+        border-radius: 5px;
         font-size: 0.9em;
+        color: var(--text-secondary);
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 640px) {
+        .library-container { padding: 72px 16px 40px; }
+        .library-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+        .book-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
     }
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="library-container">
+
+    <!-- Header -->
     <div class="library-header">
-        <h1>Library</h1>
-        <p>Your personal reading collection</p>
+        <div class="library-header-left">
+            <h1>Library</h1>
+            <p>Your personal reading collection</p>
+        </div>
+        {% if books %}
+        <span class="library-book-count">{{ books|length }} book{% if books|length != 1 %}s{% endif %}</span>
+        {% endif %}
     </div>
 
     <!-- Upload Zone -->
     <div class="upload-zone glass-panel" id="uploadZone">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p>Drop a book here or click to upload</p>
-        <span class="hint">Supports EPUB, PDF, DOCX, MOBI</span>
+        <div class="upload-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+        </div>
+        <div class="upload-title">Drop a book here or click to upload</div>
+        <div class="upload-sub">Drag &amp; drop, or click anywhere to browse</div>
+        <div class="upload-formats">
+            <span class="format-pill">EPUB</span>
+            <span class="format-pill">PDF</span>
+            <span class="format-pill">DOCX</span>
+            <span class="format-pill">MOBI</span>
+        </div>
         <input type="file" id="fileInput" accept=".epub,.pdf,.docx,.doc,.mobi">
         <div class="upload-progress" id="uploadProgress">
             <div class="spinner"></div>
-            <span>Processing book...</span>
+            <span>Processing book&hellip;</span>
         </div>
         <div class="upload-error" id="uploadError"></div>
     </div>
 
+    <!-- Empty State -->
     {% if not books %}
     <div class="empty-state">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-        </svg>
-        <p>No books in your library yet.</p>
-        <p>Upload a book above or run <code>python reader3.py &lt;file&gt;</code></p>
+        <div class="empty-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+        </div>
+        <h3>No books yet</h3>
+        <p>Upload a book above to get started.</p>
+        <p>Or run <code>python reader3.py &lt;file&gt;</code> from the command line.</p>
     </div>
     {% endif %}
 
+    <!-- Book Grid -->
     <div class="book-grid">
         {% for book in books %}
-        {% set colors = [
+        {% set palettes = [
             ['#6366f1', '#8b5cf6'],
             ['#ec4899', '#f43f5e'],
             ['#14b8a6', '#06b6d4'],
@@ -219,31 +417,55 @@
             ['#8b5cf6', '#d946ef'],
             ['#0ea5e9', '#2563eb']
         ] %}
-        {% set pair = colors[loop.index0 % colors|length] %}
+        {% set pair = palettes[loop.index0 % palettes|length] %}
         <a href="/read/{{ book.id }}/0" class="book-card glass-panel">
+            <!-- Cover -->
             <div class="book-cover">
-                <svg class="cover-bg" viewBox="0 0 260 160" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                <svg class="cover-bg" viewBox="0 0 260 170" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <linearGradient id="grad{{ loop.index }}" x1="0%" y1="0%" x2="100%" y2="100%">
                             <stop offset="0%" style="stop-color:{{ pair[0] }}"/>
                             <stop offset="100%" style="stop-color:{{ pair[1] }}"/>
                         </linearGradient>
                     </defs>
-                    <rect width="260" height="160" fill="url(#grad{{ loop.index }})"/>
-                    <circle cx="200" cy="30" r="60" fill="rgba(255,255,255,0.08)"/>
-                    <circle cx="40" cy="140" r="80" fill="rgba(255,255,255,0.05)"/>
+                    <rect width="260" height="170" fill="url(#grad{{ loop.index }})"/>
+                    <circle cx="220" cy="-10" r="90" fill="rgba(255,255,255,0.07)"/>
+                    <circle cx="30" cy="160" r="100" fill="rgba(255,255,255,0.04)"/>
+                    <circle cx="130" cy="85" r="40" fill="rgba(255,255,255,0.03)"/>
                 </svg>
+                <div class="cover-shimmer"></div>
                 <div class="cover-content">
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    <svg class="cover-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
                     <div class="cover-title">{{ book.title }}</div>
                 </div>
+                {% if book.format %}
+                <div class="format-badge">{{ book.format }}</div>
+                {% endif %}
             </div>
-            <div class="book-title">{{ book.title }}</div>
-            <div class="book-author">{{ book.author or "Unknown author" }}</div>
-            <div class="book-chapters">{{ book.chapters }} sections</div>
+            <!-- Body -->
+            <div class="book-card-body">
+                <div class="book-title">{{ book.title }}</div>
+                <div class="book-author">{{ book.author or "Unknown author" }}</div>
+                <div class="book-card-footer">
+                    <div class="book-meta">
+                        <span class="meta-pill">{{ book.chapters }} sections</span>
+                    </div>
+                    <span class="read-arrow">
+                        Read
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                            <polyline points="12 5 19 12 12 19"/>
+                        </svg>
+                    </span>
+                </div>
+            </div>
         </a>
         {% endfor %}
     </div>
+
 </div>
 {% endblock %}
 
@@ -253,14 +475,17 @@
     const uploadProgress = document.getElementById('uploadProgress');
     const uploadError = document.getElementById('uploadError');
 
-    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('click', (e) => {
+        if (e.target.closest('input, button')) return;
+        fileInput.click();
+    });
 
     uploadZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         uploadZone.classList.add('dragover');
     });
-    uploadZone.addEventListener('dragleave', () => {
-        uploadZone.classList.remove('dragover');
+    uploadZone.addEventListener('dragleave', (e) => {
+        if (!uploadZone.contains(e.relatedTarget)) uploadZone.classList.remove('dragover');
     });
     uploadZone.addEventListener('drop', (e) => {
         e.preventDefault();

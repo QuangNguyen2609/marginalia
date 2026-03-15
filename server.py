@@ -1,3 +1,4 @@
+import json
 import os
 import pickle
 from datetime import datetime
@@ -5,14 +6,15 @@ from functools import lru_cache
 from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry, process_book, save_to_pickle
 from llm_chat import (
-    AzureConfig, load_config, save_config,
+    LLMConfig, load_config, save_config,
     load_chat_history, save_chat_history, clear_chat_history,
-    chat_completion,
+    list_conversations, create_conversation,
+    chat_completion_stream,
 )
 
 app = FastAPI()
@@ -50,11 +52,13 @@ async def library_view(request: Request):
             if item.endswith("_data") and os.path.isdir(os.path.join(BOOKS_DIR, item)):
                 book = load_book_cached(item)
                 if book:
+                    fmt = os.path.splitext(book.source_file)[1].lstrip(".").upper() if book.source_file else "EPUB"
                     books.append({
                         "id": item,
                         "title": book.metadata.title,
                         "author": ", ".join(book.metadata.authors),
-                        "chapters": len(book.spine)
+                        "chapters": len(book.spine),
+                        "format": fmt or "EPUB",
                     })
     return templates.TemplateResponse("library.html", {"request": request, "books": books})
 
@@ -172,23 +176,24 @@ async def upload_book(file: UploadFile = File(...)):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
-    """Send a message and get an LLM response with chapter context."""
+    """Send a message and stream the LLM response token by token (SSE)."""
     body = await request.json()
     book_id = body.get("book_id")
     chapter_index = body.get("chapter_index", 0)
     user_message = body.get("message", "").strip()
+    selected_text = body.get("selected_text", "").strip()
+    conv_id = body.get("conv_id")
 
     if not book_id or not user_message:
         raise HTTPException(status_code=400, detail="book_id and message are required")
 
     config = load_config()
     if not config.is_configured:
-        return JSONResponse(
+        raise HTTPException(
             status_code=400,
-            content={"detail": "Azure OpenAI is not configured. Click the gear icon to set up."}
+            detail="LLM is not configured. Click the gear icon to set up."
         )
 
-    # Get chapter context
     book = load_book_cached(book_id)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
@@ -197,10 +202,9 @@ async def chat_endpoint(request: Request):
         raise HTTPException(status_code=400, detail="Invalid chapter index")
 
     chapter = book.spine[chapter_index]
-    chapter_text = chapter.text[:8000]  # Limit context size
+    chapter_text = chapter.text[:8000]
 
-    # Build messages
-    history = load_chat_history(book_id)
+    history = load_chat_history(book_id, conv_id)
     system_prompt = (
         f"You are a helpful reading assistant for the book '{book.metadata.title}'. "
         f"The user is currently reading Chapter {chapter_index + 1}: '{chapter.title}'. "
@@ -209,39 +213,66 @@ async def chat_endpoint(request: Request):
     )
 
     messages = [{"role": "system", "content": system_prompt}]
+    for msg in history[-10:]:
+        content = msg["content"]
+        if msg["role"] == "user" and msg.get("selected_text"):
+            content = f'[Highlighted passage: "{msg["selected_text"]}"]\n\n{content}'
+        messages.append({"role": msg["role"], "content": content})
+    user_content = user_message
+    if selected_text:
+        user_content = f'[Highlighted passage: "{selected_text}"]\n\n{user_message}'
+    messages.append({"role": "user", "content": user_content})
 
-    # Add recent history (last 10 messages)
-    recent = history[-10:]
-    for msg in recent:
-        messages.append({"role": msg["role"], "content": msg["content"]})
+    async def generate():
+        tokens = []
+        try:
+            async for token in chat_completion_stream(config, messages):
+                tokens.append(token)
+                yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
 
-    messages.append({"role": "user", "content": user_message})
+        # Save full response to history after streaming completes
+        response_text = "".join(tokens)
+        now = datetime.now().isoformat()
+        user_entry = {"role": "user", "content": user_message, "chapter": chapter_index, "timestamp": now}
+        if selected_text:
+            user_entry["selected_text"] = selected_text
+        history.append(user_entry)
+        history.append({"role": "assistant", "content": response_text, "chapter": chapter_index, "timestamp": now})
+        save_chat_history(book_id, history, conv_id)
 
-    try:
-        response_text = await chat_completion(config, messages)
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": f"LLM error: {e}"})
+        yield f"data: {json.dumps({'done': True, 'chapter': chapter_index})}\n\n"
 
-    # Save to history
-    now = datetime.now().isoformat()
-    history.append({"role": "user", "content": user_message, "chapter": chapter_index, "timestamp": now})
-    history.append({"role": "assistant", "content": response_text, "chapter": chapter_index, "timestamp": now})
-    save_chat_history(book_id, history)
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
-    return {"response": response_text, "chapter": chapter_index}
+
+@app.get("/api/chat/conversations/{book_id}")
+async def get_conversations(book_id: str):
+    """List all conversations for a book."""
+    convs = list_conversations(book_id)
+    return {"conversations": convs}
+
+
+@app.post("/api/chat/conversations/{book_id}")
+async def new_conversation(book_id: str):
+    """Create a new empty conversation for a book."""
+    conv_id = create_conversation(book_id)
+    return {"conv_id": conv_id}
 
 
 @app.get("/api/chat/history/{book_id}")
-async def get_chat_history(book_id: str):
-    """Retrieve chat history for a book."""
-    history = load_chat_history(book_id)
+async def get_chat_history(book_id: str, conv_id: Optional[str] = None):
+    """Retrieve chat history for a book (optionally scoped to a conversation)."""
+    history = load_chat_history(book_id, conv_id)
     return {"history": history}
 
 
 @app.delete("/api/chat/history/{book_id}")
-async def delete_chat_history(book_id: str):
-    """Clear chat history for a book."""
-    clear_chat_history(book_id)
+async def delete_chat_history(book_id: str, conv_id: Optional[str] = None):
+    """Clear chat history (optionally scoped to a conversation)."""
+    clear_chat_history(book_id, conv_id)
     return {"success": True}
 
 
@@ -252,9 +283,10 @@ async def get_settings():
     """Get current settings (API key masked)."""
     config = load_config()
     return {
-        "endpoint": config.endpoint,
+        "provider": config.provider,
+        "model": config.model,
         "api_key_set": bool(config.api_key),
-        "deployment_name": config.deployment_name,
+        "endpoint": config.endpoint,
         "api_version": config.api_version,
     }
 
@@ -265,14 +297,11 @@ async def update_settings(request: Request):
     body = await request.json()
     config = load_config()
 
-    if "endpoint" in body:
-        config.endpoint = body["endpoint"]
+    for field in ("provider", "model", "endpoint", "api_version"):
+        if field in body:
+            setattr(config, field, body[field])
     if "api_key" in body and body["api_key"]:
         config.api_key = body["api_key"]
-    if "deployment_name" in body:
-        config.deployment_name = body["deployment_name"]
-    if "api_version" in body:
-        config.api_version = body["api_version"]
 
     save_config(config)
     return {"success": True}
