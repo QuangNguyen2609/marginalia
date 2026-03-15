@@ -10,10 +10,10 @@ wheels/
 .venv
 
 # Custom
-*_data/
+library/
+config.json
 *.epub
 *.pdf
 *.mobi
 *.docx
 *.doc
-config.json

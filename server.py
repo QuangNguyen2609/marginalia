@@ -19,7 +19,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # Where are the book folders located?
-BOOKS_DIR = "."
+BOOKS_DIR = "library"
 
 ALLOWED_EXTENSIONS = {".epub", ".pdf", ".mobi", ".docx", ".doc"}
 
@@ -47,7 +47,7 @@ async def library_view(request: Request):
     books = []
     if os.path.exists(BOOKS_DIR):
         for item in os.listdir(BOOKS_DIR):
-            if item.endswith("_data") and os.path.isdir(item):
+            if item.endswith("_data") and os.path.isdir(os.path.join(BOOKS_DIR, item)):
                 book = load_book_cached(item)
                 if book:
                     books.append({
@@ -65,13 +65,29 @@ async def redirect_to_first_chapter(request: Request, book_id: str):
     book = load_book_cached(book_id)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
+    is_pdf = book.source_file.lower().endswith(".pdf")
+    pdf_needs_reprocess = is_pdf and not os.path.exists(
+        os.path.join(BOOKS_DIR, book_id, "source.pdf")
+    )
     return templates.TemplateResponse("reader.html", {
         "request": request,
         "book": book,
         "all_chapters": book.spine,
         "initial_chapter": 0,
         "book_id": book_id,
+        "is_pdf": is_pdf,
+        "pdf_needs_reprocess": pdf_needs_reprocess,
     })
+
+
+@app.get("/read/{book_id}/source.pdf")
+async def serve_pdf_source(book_id: str):
+    """Serves the original PDF file for PDF.js client-side rendering."""
+    safe_book_id = os.path.basename(book_id)
+    pdf_path = os.path.join(BOOKS_DIR, safe_book_id, "source.pdf")
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF source not found")
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 @app.get("/read/{book_id}/{chapter_index}", response_class=HTMLResponse)
@@ -83,12 +99,18 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     if chapter_index < 0 or chapter_index >= len(book.spine):
         raise HTTPException(status_code=404, detail="Chapter not found")
 
+    is_pdf = book.source_file.lower().endswith(".pdf")
+    pdf_needs_reprocess = is_pdf and not os.path.exists(
+        os.path.join(BOOKS_DIR, book_id, "source.pdf")
+    )
     return templates.TemplateResponse("reader.html", {
         "request": request,
         "book": book,
         "all_chapters": book.spine,
         "initial_chapter": chapter_index,
         "book_id": book_id,
+        "is_pdf": is_pdf,
+        "pdf_needs_reprocess": pdf_needs_reprocess,
     })
 
 

@@ -2,6 +2,10 @@
 
 {% block title %}{{ book.metadata.title }}{% endblock %}
 
+{% block head_scripts %}
+{% if is_pdf and not pdf_needs_reprocess %}<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>{% endif %}
+{% endblock %}
+
 {% block extra_styles %}
 <style>
     :root {} /* absorbs CSS error from nested <style> tag so body rule parses correctly */
@@ -163,6 +167,52 @@
     /* Chapter sections for continuous scroll */
     .chapter-section { padding-bottom: 60px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
     .chapter-section:last-child { border-bottom: none; }
+
+    /* PDF mode — wider, tighter padding, page cards */
+    body.pdf-mode .content-container {
+        max-width: min(860px, calc(100vw - 40px));
+        padding: 32px 16px 40px;
+    }
+    body.pdf-mode .chapter-section {
+        padding-bottom: 12px;
+        margin-bottom: 8px;
+        border-bottom: none;
+    }
+    /* Placeholder shown while PDF.js has not yet rendered the page */
+    .pdf-page-placeholder {
+        width: 100%;
+        background: rgba(0,0,0,0.04);
+        border-radius: 4px;
+        display: block;
+    }
+    /* Wrapper around canvas + text layer once rendered */
+    .pdf-page-wrapper {
+        position: relative;
+        width: 100%;
+        overflow: hidden;
+        background: #fff;
+        border-radius: 4px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+    }
+    .pdf-page-wrapper canvas { display: block; }
+    /* PDF.js text layer — invisible but selectable */
+    .textLayer {
+        position: absolute;
+        left: 0; top: 0; right: 0; bottom: 0;
+        overflow: hidden;
+        opacity: 1;
+        line-height: 1;
+        -webkit-text-size-adjust: none;
+        forced-color-adjust: none;
+    }
+    .textLayer span, .textLayer br {
+        color: transparent;
+        position: absolute;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0% 0%;
+    }
+    .textLayer ::selection { background: rgba(0, 0, 255, 0.3); color: transparent; }
 
     /* Fixed chapter counter at bottom center of the reading area */
     .chapter-counter {
@@ -513,11 +563,19 @@
     <!-- MAIN CONTENT -->
     <div id="main">
         <div class="content-container">
+            {% if pdf_needs_reprocess %}
+            <div style="text-align:center; padding: 80px 20px; color: var(--text-muted);">
+                <p style="font-size:1.5em; margin-bottom:16px;">⚠️</p>
+                <p style="font-size:1.1em; font-weight:600; margin-bottom:8px;">PDF needs to be re-uploaded</p>
+                <p style="margin-bottom:24px;">This book was processed with an older version. Please re-upload the PDF from the <a href="/">library page</a> to enable proper rendering.</p>
+            </div>
+            {% else %}
             {% for chapter in all_chapters %}
             <section id="chapter-{{ loop.index0 }}" class="chapter-section" data-chapter-index="{{ loop.index0 }}">
                 <div class="book-content">{{ chapter.content | safe }}</div>
             </section>
             {% endfor %}
+            {% endif %}
         </div>
     </div>
 
@@ -926,6 +984,69 @@
     }, { root: mainEl, rootMargin: '-20% 0px -60% 0px' });
 
     document.querySelectorAll('.chapter-section').forEach(s => chapterObserver.observe(s));
+
+    // ===== PDF: PDF.js canvas rendering with text layer =====
+    {% if is_pdf and not pdf_needs_reprocess %}
+    document.body.classList.add('pdf-mode');
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const PDF_URL = '/read/{{ book_id }}/source.pdf';
+    const renderedPages = new Set();
+
+    async function renderPDFPage(pageNum, placeholder) {
+        if (renderedPages.has(pageNum)) return;
+        renderedPages.add(pageNum);
+
+        let page;
+        try { page = await pdfDoc.getPage(pageNum); } catch(e) { return; }
+
+        const containerWidth = placeholder.offsetWidth || 800;
+        const unscaled = page.getViewport({ scale: 1 });
+        const scale = containerWidth / unscaled.width;
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+
+        const textLayerDiv = document.createElement('div');
+        textLayerDiv.className = 'textLayer';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'pdf-page-wrapper';
+        wrapper.appendChild(canvas);
+        wrapper.appendChild(textLayerDiv);
+        placeholder.replaceWith(wrapper);
+
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+        try {
+            const textContent = await page.getTextContent();
+            pdfjsLib.renderTextLayer({
+                textContent,
+                container: textLayerDiv,
+                viewport,
+                textDivs: [],
+            });
+        } catch(e) { /* text layer optional */ }
+    }
+
+    let pdfDoc = null;
+    pdfjsLib.getDocument(PDF_URL).promise.then(doc => {
+        pdfDoc = doc;
+        const pdfObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const ph = entry.target.querySelector('.pdf-page-placeholder');
+                if (!ph) { pdfObserver.unobserve(entry.target); return; }
+                pdfObserver.unobserve(entry.target);
+                renderPDFPage(parseInt(ph.dataset.page), ph);
+            });
+        }, { root: mainEl, rootMargin: '800px 0px 800px 0px' });
+        document.querySelectorAll('.chapter-section').forEach(s => pdfObserver.observe(s));
+    });
+    {% endif %}
 
     // ===== Keyboard Shortcuts =====
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;

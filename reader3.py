@@ -314,36 +314,31 @@ def process_pdf(pdf_path: str, output_dir: str) -> Book:
     raw_toc = doc.get_toc()
     toc_entries = _build_pdf_toc(raw_toc) if raw_toc else []
 
-    # Process pages
+    # Copy source PDF to output dir so it can be served for PDF.js rendering
+    import shutil as _shutil
+    source_pdf_dest = os.path.join(output_dir, 'source.pdf')
+    _shutil.copy2(pdf_path, source_pdf_dest)
+
+    # Create one chapter entry per page; content is a sized placeholder.
+    # PDF.js in the browser will render each page into a canvas with a text layer.
     image_map = {}
     chapters = []
     for i, page in enumerate(doc):
-        html_content = page.get_text("html")
         plain_text = page.get_text()
+        w, h = page.rect.width, page.rect.height
 
-        # Extract images from page
-        for img_index, img in enumerate(page.get_images(full=True)):
-            xref = img[0]
-            try:
-                base_image = doc.extract_image(xref)
-                img_ext = base_image.get("ext", "png")
-                img_name = f"page{i+1}_img{img_index}.{img_ext}"
-                img_path = os.path.join(images_dir, img_name)
-                with open(img_path, "wb") as f:
-                    f.write(base_image["image"])
-                image_map[img_name] = f"images/{img_name}"
-            except Exception:
-                continue
-
-        # Clean HTML
-        soup = BeautifulSoup(html_content, 'html.parser')
-        soup = clean_html_content(soup)
+        # aspect-ratio reserves the correct space before JS renders the canvas,
+        # keeping TOC scroll positions accurate.
+        content = (
+            f'<div class="pdf-page-placeholder" data-page="{i+1}" '
+            f'style="aspect-ratio:{w}/{h}"></div>'
+        )
 
         chapter = ChapterContent(
             id=f"page_{i+1}",
             href=f"page_{i+1}.html",
             title=f"Page {i+1}",
-            content=str(soup),
+            content=content,
             text=' '.join(plain_text.split()),
             order=i
         )
