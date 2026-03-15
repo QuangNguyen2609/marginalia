@@ -1,94 +1,510 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ book.metadata.title }}</title>
-    <style>
-        /* Layout */
-        body { margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; font-family: "Georgia", serif; background: #fff; }
+{% extends "base.html" %}
 
-        /* Sidebar */
-        #sidebar { width: 300px; background: #f8f9fa; border-right: 1px solid #e9ecef; overflow-y: auto; padding: 20px; flex-shrink: 0; }
-        .nav-header { font-family: -apple-system, sans-serif; font-weight: bold; color: #495057; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #dee2e6; }
-        .nav-home { display: block; margin-bottom: 20px; color: #3498db; text-decoration: none; font-family: -apple-system, sans-serif; font-size: 0.9em; }
+{% block title %}{{ book.metadata.title }}{% endblock %}
 
-        /* TOC Tree */
-        ul.toc-list { list-style: none; padding-left: 0; margin: 0; }
-        ul.toc-list ul { padding-left: 20px; } /* Indent children */
-        li.toc-item { margin-bottom: 8px; }
-        a.toc-link { text-decoration: none; color: #495057; font-size: 0.95em; display: block; padding: 4px 0; line-height: 1.4; }
-        a.toc-link:hover { color: #000; text-decoration: underline; }
-        a.toc-link.active { color: #d63384; font-weight: bold; }
+{% block extra_styles %}
+<style>
+    :root {} /* absorbs CSS error from nested <style> tag so body rule parses correctly */
+    body { display: flex; height: 100vh; overflow: hidden; }
 
-        /* Main Content */
-        #main { flex-grow: 1; overflow-y: auto; position: relative; scroll-behavior: smooth; }
-        .content-container { max-width: 700px; margin: 0 auto; padding: 60px 40px; line-height: 1.8; font-size: 1.15em; color: #212529; }
+    /* Prevent sidebar animation on page load */
+    body.no-transition #sidebar,
+    body.no-transition #chatSidebar,
+    body.no-transition #main,
+    body.no-transition .chat-toggle-btn,
+    body.no-transition .chapter-counter {
+        transition: none !important;
+    }
 
-        /* Content Styling (Basic normalization for the book HTML) */
-        .book-content img { max-width: 100%; height: auto; display: block; margin: 20px auto; }
-        .book-content h1, .book-content h2, .book-content h3 { font-family: -apple-system, sans-serif; margin-top: 1.5em; color: #333; }
-        .book-content p { margin-bottom: 1.5em; text-align: justify; }
+    /* ===== Left Sidebar (TOC) ===== */
+    #sidebar {
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        width: 300px;
+        z-index: 100;
+        overflow-y: auto;
+        padding: 60px 20px 20px; /* top padding clears the hamburger button */
+        border-radius: 0;
+        border-right: 1px solid var(--border);
+        transform: translateX(-100%);
+        transition: transform var(--transition);
+    }
+    #sidebar.sidebar-visible { transform: translateX(0); }
 
-        /* Navigation Footer */
-        .chapter-nav { display: flex; justify-content: space-between; margin-top: 60px; padding-top: 20px; border-top: 1px solid #eee; font-family: -apple-system, sans-serif; }
-        .nav-btn { text-decoration: none; color: #3498db; font-weight: bold; padding: 10px 20px; border: 1px solid #3498db; border-radius: 4px; transition: all 0.2s; }
-        .nav-btn:hover { background: #3498db; color: white; }
-        .nav-btn.disabled { opacity: 0.5; pointer-events: none; border-color: #ccc; color: #ccc; }
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+    }
+    .sidebar-header .book-title {
+        font-weight: 600;
+        font-size: 0.95em;
+        color: var(--text-primary);
+        flex: 1;
+        margin-right: 8px;
+        line-height: 1.3;
+    }
+    .sidebar-close {
+        background: none; border: none; cursor: pointer;
+        color: var(--text-muted); font-size: 18px; padding: 4px;
+    }
 
-    </style>
-</head>
-<body>
+    .nav-home {
+        display: block;
+        margin-bottom: 16px;
+        font-size: 0.85em;
+        color: var(--accent);
+    }
 
-    <!-- SIDEBAR -->
-    <div id="sidebar">
+    /* TOC Tree */
+    ul.toc-list { list-style: none; padding-left: 0; margin: 0; }
+    ul.toc-list ul { padding-left: 16px; }
+    li.toc-item { margin-bottom: 2px; }
+
+    .toc-item-header {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .toc-chevron {
+        background: none; border: none; cursor: pointer;
+        color: var(--text-muted); font-size: 10px; padding: 4px;
+        transition: transform 0.2s;
+        width: 22px; height: 22px;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+    }
+    .toc-chevron.expanded { transform: rotate(90deg); }
+    .toc-chevron-placeholder { width: 22px; flex-shrink: 0; }
+
+    a.toc-link {
+        text-decoration: none;
+        color: var(--text-secondary);
+        font-size: 0.88em;
+        display: block;
+        padding: 5px 6px;
+        border-radius: 6px;
+        line-height: 1.4;
+        transition: background var(--transition), color var(--transition);
+        flex: 1;
+    }
+    a.toc-link:hover { background: var(--border); color: var(--text-primary); }
+    a.toc-link.active { color: var(--accent); font-weight: 600; background: rgba(91, 124, 247, 0.08); }
+
+    .toc-children {
+        overflow: hidden;
+        max-height: 0;
+        transition: max-height 0.3s ease;
+    }
+    .toc-children.expanded { max-height: 2000px; }
+
+    /* ===== Hamburger Toggle ===== */
+    .hamburger-btn {
+        position: fixed;
+        top: 16px; left: 16px;
+        z-index: 1001;
+        background: none; border: none;
+        cursor: pointer;
+        padding: 8px;
+        border-radius: 8px;
+        color: var(--text-secondary);
+        transition: background var(--transition);
+        width: 40px; height: 40px;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .hamburger-btn:hover { background: var(--border); }
+
+    /* ===== Main Content ===== */
+    #main {
+        flex-grow: 1;
+        min-height: 0;
+        overflow-y: auto;
+        scroll-behavior: smooth;
+        transition: margin var(--transition);
+    }
+    body.sidebar-open #main { margin-left: 300px; }
+    body.chat-open #main { margin-right: 380px; }
+
+    .content-container {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 80px 40px 60px;
+        line-height: 1.85;
+        font-size: 1.1em;
+        font-family: "Georgia", "Times New Roman", serif;
+        color: var(--text-primary);
+    }
+
+    .book-content img {
+        max-width: 100%; height: auto; display: block; margin: 24px auto; border-radius: 8px;
+    }
+    /* Hide broken images and show a nice placeholder */
+    .book-content img.img-error {
+        width: 100%;
+        max-width: 400px;
+        height: 240px;
+        object-fit: contain;
+        background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+        border-radius: 12px;
+        opacity: 0.15;
+    }
+    .book-content h1, .book-content h2, .book-content h3 {
+        font-family: -apple-system, sans-serif;
+        margin-top: 1.5em; margin-bottom: 0.5em;
+        color: var(--text-primary);
+    }
+    .book-content p { margin-bottom: 1.4em; text-align: justify; }
+    .book-content a { color: var(--accent); }
+
+    /* Chapter sections for continuous scroll */
+    .chapter-section { padding-bottom: 60px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .chapter-section:last-child { border-bottom: none; }
+
+    /* Fixed chapter counter at bottom center of the reading area */
+    .chapter-counter {
+        position: fixed; bottom: 24px;
+        left: 0; right: 0;
+        margin-left: 0; margin-right: 0;
+        text-align: center;
+        z-index: 500; font-size: 0.8em; color: var(--text-muted);
+        pointer-events: none; white-space: nowrap;
+        transition: margin var(--transition);
+    }
+    body.sidebar-open .chapter-counter { margin-left: 300px; }
+    body.chat-open .chapter-counter { margin-right: 380px; }
+    .chapter-counter span.counter-pill {
+        display: inline-block;
+        background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        padding: 4px 14px; border-radius: 20px; border: 1px solid var(--glass-border);
+    }
+
+    /* ===== Chat Sidebar (Right) ===== */
+    #chatSidebar {
+        position: fixed;
+        top: 0; right: 0; bottom: 0;
+        width: 380px;
+        z-index: 100;
+        border-radius: 0;
+        border-left: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        transform: translateX(100%);
+        transition: transform var(--transition);
+    }
+    #chatSidebar.sidebar-visible { transform: translateX(0); }
+
+    .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+    .chat-header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .chat-header h3 {
+        font-size: 0.95em;
+        font-weight: 600;
+    }
+    .chat-header-actions {
+        display: flex;
+        gap: 4px;
+    }
+    .chat-header-btn {
+        background: none; border: none; cursor: pointer;
+        color: var(--text-muted); padding: 4px; border-radius: 6px;
+        transition: background var(--transition), color var(--transition);
+        font-size: 16px;
+    }
+    .chat-header-btn:hover { background: var(--border); color: var(--text-primary); }
+
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .chat-msg {
+        max-width: 85%;
+        padding: 10px 14px;
+        border-radius: 14px;
+        font-size: 0.9em;
+        line-height: 1.5;
+        word-wrap: break-word;
+    }
+    .chat-msg.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: white;
+        border-bottom-right-radius: 4px;
+    }
+    .chat-msg.assistant {
+        align-self: flex-start;
+        background: var(--glass-bg);
+        border: 1px solid var(--border);
+        border-bottom-left-radius: 4px;
+    }
+    .chat-msg .context-badge {
+        font-size: 0.75em;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        display: block;
+    }
+    .chat-msg.assistant .context-badge { color: var(--text-muted); }
+
+    .chat-typing {
+        display: none;
+        align-self: flex-start;
+        padding: 10px 14px;
+        background: var(--glass-bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        font-size: 0.85em;
+        color: var(--text-muted);
+    }
+    .chat-typing.active { display: block; }
+
+    .chat-input-area {
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+    .chat-input-wrap {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+    }
+    .chat-input-wrap textarea {
+        flex: 1;
+        resize: none;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-family: inherit;
+        font-size: 0.9em;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        outline: none;
+        min-height: 40px;
+        max-height: 120px;
+        transition: border-color var(--transition);
+    }
+    .chat-input-wrap textarea:focus { border-color: var(--accent); }
+    .chat-send-btn {
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        width: 40px;
+        height: 40px;
+        flex-shrink: 0;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background var(--transition);
+    }
+    .chat-send-btn:hover { background: var(--accent-hover); }
+    .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .chat-empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 40px 20px;
+        font-size: 0.9em;
+    }
+
+    .chat-not-configured {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 30px 20px;
+        font-size: 0.85em;
+        line-height: 1.6;
+    }
+    .chat-not-configured a { color: var(--accent); }
+
+    /* ===== Chat Toggle Button ===== */
+    .chat-toggle-btn {
+        position: fixed;
+        bottom: 24px; right: 24px;
+        z-index: 1001;
+        width: 48px; height: 48px;
+        border-radius: 50%;
+        border: none;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        box-shadow: 0 4px 12px rgba(91, 124, 247, 0.4);
+        transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+    }
+    .chat-toggle-btn:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(91, 124, 247, 0.5); }
+    /* Hide chat toggle when chat is open so it doesn't overlap Send button */
+    body.chat-open .chat-toggle-btn { opacity: 0; pointer-events: none; }
+
+    /* ===== Settings Modal ===== */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 2000;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+
+    .modal-content {
+        width: 420px;
+        max-width: 90vw;
+        padding: 28px;
+    }
+    .modal-content h3 {
+        font-size: 1.1em;
+        margin-bottom: 20px;
+    }
+    .form-group {
+        margin-bottom: 16px;
+    }
+    .form-group label {
+        display: block;
+        font-size: 0.85em;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+    .form-group input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 0.9em;
+        outline: none;
+        transition: border-color var(--transition);
+    }
+    .form-group input:focus { border-color: var(--accent); }
+
+    .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+    }
+    .modal-btn {
+        padding: 8px 18px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9em;
+        font-weight: 500;
+        transition: background var(--transition);
+    }
+    .modal-btn.secondary {
+        background: var(--border);
+        color: var(--text-primary);
+    }
+    .modal-btn.primary {
+        background: var(--accent);
+        color: white;
+    }
+    .modal-btn:hover { opacity: 0.9; }
+
+    .settings-status {
+        font-size: 0.85em;
+        margin-top: 8px;
+        color: var(--text-muted);
+    }
+
+    /* Move toolbar when chat is open so it doesn't overlap chat header */
+    body.chat-open .top-toolbar {
+        right: 396px;
+    }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 768px) {
+        #sidebar { width: 280px; }
+        body.sidebar-open #main { margin-left: 0; }
+
+        #chatSidebar {
+            width: 100%;
+            top: auto;
+            height: 60vh;
+            border-radius: var(--radius) var(--radius) 0 0;
+            border-left: none;
+            border-top: 1px solid var(--border);
+            transform: translateY(100%);
+        }
+        #chatSidebar.sidebar-visible { transform: translateY(0); }
+        body.chat-open #main { margin-right: 0; }
+
+        .content-container { padding: 70px 20px 40px; }
+        .chat-toggle-btn { bottom: 16px; right: 16px; }
+    }
+</style>
+{% endblock %}
+
+{% block toolbar_extra_left %}
+{% endblock %}
+
+{% block body %}
+    <!-- Hamburger Toggle -->
+    <button class="hamburger-btn glass-panel" id="sidebarToggle" title="Toggle sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+    </button>
+
+    <!-- LEFT SIDEBAR (TOC) -->
+    <div id="sidebar" class="glass-panel">
         <a href="/" class="nav-home">← Back to Library</a>
-        <div class="nav-header">{{ book.metadata.title }}</div>
+        <div class="sidebar-header">
+            <span class="book-title">{{ book.metadata.title }}</span>
+            <button class="sidebar-close" id="sidebarClose">✕</button>
+        </div>
 
-        <!-- Recursive Macro for TOC -->
-        {% macro render_toc(items) %}
-            <ul class="toc-list">
-            {% for item in items %}
-                <li class="toc-item">
-                    <!--
-                        Matching Logic:
-                        If the TOC item filename matches the current chapter filename, mark active.
-                        Ideally we match spine indices, but Reader 3 TOC maps to filenames.
-                        We use a simple hash matching logic here.
-                    -->
-                    {% set is_active = current_chapter.href == item.file_href %}
-
-                    <!--
-                       We need to find which linear chapter index (0, 1, 2) corresponds
-                       to this TOC entry file.
-                       Since that's hard to calculate in Jinja, we just link to the
-                       file anchor. BUT, to make our linear navigation work, we
-                       rely on the fact that the user is currently reading 'chapter_index'.
-
-                       Ideally, clicking a TOC link should find the 'index' of that file.
-                       For simplicity in this version: We link to the 'href' (filename)
-                       and let JavaScript or Backend handle it?
-
-                       Actually, let's just link to the file. The browser interprets #anchors.
-                       However, our router uses /read/book/INDEX.
-
-                       SIMPLE FIX: We won't link the TOC to the route index in this simple version
-                       unless we build a map. We will visually show structure,
-                       but rely on "Previous/Next" for linear reading.
-
-                       BETTER FIX: Use JavaScript to match filenames.
-                    -->
-                    <a href="#" onclick="findAndGo('{{ item.file_href }}')"
-                       class="toc-link {% if is_active %}active{% endif %}">
+        {% macro render_toc(items, depth=0) %}
+        <ul class="toc-list">
+        {% for item in items %}
+            <li class="toc-item">
+                <div class="toc-item-header">
+                    {% if item.children %}
+                    <button class="toc-chevron" data-toc-id="{{ item.file_href }}-{{ loop.index }}-{{ depth }}" onclick="toggleTocChildren(this)">▶</button>
+                    {% else %}
+                    <span class="toc-chevron-placeholder"></span>
+                    {% endif %}
+                    <a href="#" onclick="findAndGo('{{ item.file_href }}'); return false;"
+                       class="toc-link" data-href="{{ item.file_href }}">
                         {{ item.title }}
                     </a>
-
-                    {% if item.children %}
-                        {{ render_toc(item.children) }}
-                    {% endif %}
-                </li>
-            {% endfor %}
-            </ul>
+                </div>
+                {% if item.children %}
+                <div class="toc-children" data-toc-children="{{ item.file_href }}-{{ loop.index }}-{{ depth }}">
+                    {{ render_toc(item.children, depth + 1) }}
+                </div>
+                {% endif %}
+            </li>
+        {% endfor %}
+        </ul>
         {% endmacro %}
 
         {{ render_toc(book.toc) }}
@@ -97,58 +513,498 @@
     <!-- MAIN CONTENT -->
     <div id="main">
         <div class="content-container">
-            <div class="book-content">
-                {{ current_chapter.content | safe }}
+            {% for chapter in all_chapters %}
+            <section id="chapter-{{ loop.index0 }}" class="chapter-section" data-chapter-index="{{ loop.index0 }}">
+                <div class="book-content">{{ chapter.content | safe }}</div>
+            </section>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Chapter Counter -->
+    <div class="chapter-counter" id="chapterCounter">
+        <span class="counter-pill"><span id="chapterCurrent">{{ initial_chapter + 1 }}</span> / {{ all_chapters|length }}</span>
+    </div>
+
+    <!-- CHAT SIDEBAR (Right) -->
+    <div id="chatSidebar" class="glass-panel">
+        <div class="chat-header">
+            <div class="chat-header-left">
+                <h3>Chat</h3>
             </div>
-
-            <div class="chapter-nav">
-                {% if prev_idx is not none %}
-                    <a href="/read/{{ book_id }}/{{ prev_idx }}" class="nav-btn">← Previous</a>
-                {% else %}
-                    <span class="nav-btn disabled">← Previous</span>
-                {% endif %}
-
-                <span style="color: #999; padding: 10px;">
-                    Section {{ chapter_index + 1 }} of {{ book.spine|length }}
-                </span>
-
-                {% if next_idx is not none %}
-                    <a href="/read/{{ book_id }}/{{ next_idx }}" class="nav-btn">Next →</a>
-                {% else %}
-                    <span class="nav-btn disabled">Next →</span>
-                {% endif %}
+            <div class="chat-header-actions">
+                <button class="chat-header-btn" id="chatSettingsBtn" title="Settings">⚙</button>
+                <button class="chat-header-btn" id="chatClearBtn" title="Clear history">🗑</button>
+                <button class="chat-header-btn" id="chatCloseBtn" title="Close">✕</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-empty" id="chatEmpty">
+                Ask a question about this book. The current chapter will be used as context.
+            </div>
+        </div>
+        <div class="chat-typing" id="chatTyping">Thinking...</div>
+        <div class="chat-input-area">
+            <div class="chat-input-wrap">
+                <textarea id="chatInput" placeholder="Ask about this chapter... (Ctrl+Enter)" rows="1"></textarea>
+                <button class="chat-send-btn" id="chatSendBtn" title="Send">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                </button>
             </div>
         </div>
     </div>
 
-    <script>
-        // Helper to map TOC filenames to Spine Indices
-        // Pass the spine data from python to JS
-        const spineMap = {
-            {% for ch in book.spine %}
-            "{{ ch.href }}": {{ ch.order }},
-            {% endfor %}
-        };
+    <!-- Chat Toggle -->
+    <button class="chat-toggle-btn" id="chatToggle" title="Toggle chat">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+    </button>
 
-        function findAndGo(filename) {
-            // The TOC usually has specific filenames e.g. "text/part001.html"
-            // Sometimes it has anchors "text/part001.html#header"
-            // We strip the anchor to find the page index
-            const cleanFile = filename.split('#')[0];
-            const anchor = filename.split('#')[1];
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal-content glass-panel" style="max-width:360px;text-align:center;">
+            <div style="font-size:2em;margin-bottom:12px;">🗑</div>
+            <h3 id="confirmTitle" style="margin-bottom:8px;">Clear Chat History?</h3>
+            <p id="confirmMessage" style="color:var(--text-secondary);font-size:0.9em;margin-bottom:20px;line-height:1.5;">This will delete all messages for this book. This action cannot be undone.</p>
+            <div class="modal-actions" style="justify-content:center;">
+                <button class="modal-btn secondary" id="confirmCancel">Cancel</button>
+                <button class="modal-btn primary" id="confirmOk" style="background:#e74c3c;">Delete</button>
+            </div>
+        </div>
+    </div>
 
-            const idx = spineMap[cleanFile];
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content glass-panel">
+            <h3>LLM Settings</h3>
+            <div class="form-group">
+                <label>Azure Endpoint</label>
+                <input type="text" id="settingEndpoint" placeholder="https://your-resource.openai.azure.com">
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="settingApiKey" placeholder="Enter API key">
+            </div>
+            <div class="form-group">
+                <label>Deployment Name</label>
+                <input type="text" id="settingDeployment" placeholder="gpt-4o">
+            </div>
+            <div class="form-group">
+                <label>API Version</label>
+                <input type="text" id="settingApiVersion" placeholder="2024-02-15-preview" value="2024-02-15-preview">
+            </div>
+            <div class="settings-status" id="settingsStatus"></div>
+            <div class="modal-actions">
+                <button class="modal-btn secondary" id="settingsCancel">Cancel</button>
+                <button class="modal-btn primary" id="settingsSave">Save</button>
+            </div>
+        </div>
+    </div>
+{% endblock %}
 
-            if (idx !== undefined) {
-                let url = "/read/{{ book_id }}/" + idx;
-                // If there was an anchor, we could try to scroll to it,
-                // but simple page loads often lose anchor position without extra JS.
-                // Let's just go to the page.
-                window.location.href = url;
+{% block extra_scripts %}
+    const BOOK_ID = "{{ book_id }}";
+    let currentChapterIndex = {{ initial_chapter }};
+
+    // Chapter hrefs for TOC active state tracking
+    const chapterHrefs = [{% for ch in all_chapters %}"{{ ch.href }}"{% if not loop.last %},{% endif %}{% endfor %}];
+
+    // Prevent sidebar bounce: disable transitions during initial state restore
+    document.body.classList.add('no-transition');
+
+    // Spine map for TOC navigation
+    const spineMap = {
+        {% for ch in book.spine %}
+        "{{ ch.href }}": {{ ch.order }},
+        {% endfor %}
+    };
+
+    function scrollToChapter(idx) {
+        const el = document.getElementById('chapter-' + idx);
+        if (el) el.scrollIntoView({ behavior: 'instant' });
+    }
+
+    function findAndGo(filename) {
+        const idx = spineMap[filename.split('#')[0]];
+        if (idx !== undefined) scrollToChapter(idx);
+    }
+
+    // ===== Left Sidebar =====
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const sidebarClose = document.getElementById('sidebarClose');
+
+    function setSidebar(open) {
+        sidebar.classList.toggle('sidebar-visible', open);
+        document.body.classList.toggle('sidebar-open', open);
+        localStorage.setItem('sidebar-open', open);
+    }
+
+    sidebarToggle.addEventListener('click', () => setSidebar(!sidebar.classList.contains('sidebar-visible')));
+    sidebarClose.addEventListener('click', () => setSidebar(false));
+
+    // Restore sidebar state (no animation due to no-transition class)
+    if (localStorage.getItem('sidebar-open') !== 'false' && window.innerWidth > 768) {
+        setSidebar(true);
+    }
+
+    // ===== Nested TOC Collapse =====
+    function toggleTocChildren(btn) {
+        const id = btn.dataset.tocId;
+        const children = document.querySelector(`[data-toc-children="${id}"]`);
+        const expanded = children.classList.toggle('expanded');
+        btn.classList.toggle('expanded', expanded);
+        // Persist
+        const key = 'toc-' + BOOK_ID;
+        const state = JSON.parse(localStorage.getItem(key) || '{}');
+        state[id] = expanded;
+        localStorage.setItem(key, JSON.stringify(state));
+    }
+
+    // Restore TOC state
+    (function() {
+        const key = 'toc-' + BOOK_ID;
+        const state = JSON.parse(localStorage.getItem(key) || '{}');
+        document.querySelectorAll('.toc-chevron').forEach(btn => {
+            const id = btn.dataset.tocId;
+            if (state[id]) {
+                btn.classList.add('expanded');
+                const children = document.querySelector(`[data-toc-children="${id}"]`);
+                if (children) children.classList.add('expanded');
+            }
+        });
+    })();
+
+    // ===== Chat Sidebar =====
+    const chatSidebar = document.getElementById('chatSidebar');
+    const chatToggle = document.getElementById('chatToggle');
+    const chatCloseBtn = document.getElementById('chatCloseBtn');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const chatSendBtn = document.getElementById('chatSendBtn');
+    const chatTyping = document.getElementById('chatTyping');
+    const chatEmpty = document.getElementById('chatEmpty');
+
+    function setChat(open) {
+        chatSidebar.classList.toggle('sidebar-visible', open);
+        document.body.classList.toggle('chat-open', open);
+        localStorage.setItem('chat-open', open);
+        if (open) chatInput.focus();
+    }
+
+    chatToggle.addEventListener('click', () => setChat(!chatSidebar.classList.contains('sidebar-visible')));
+    chatCloseBtn.addEventListener('click', () => setChat(false));
+
+    if (localStorage.getItem('chat-open') === 'true' && window.innerWidth > 768) {
+        setChat(true);
+    }
+
+    // Re-enable transitions after initial state restore
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            document.body.classList.remove('no-transition');
+        });
+    });
+
+    // Load chat history
+    async function loadChatHistory() {
+        try {
+            const resp = await fetch(`/api/chat/history/${BOOK_ID}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.history && data.history.length > 0) {
+                chatEmpty.style.display = 'none';
+                data.history.forEach(msg => appendMessage(msg.role, msg.content, msg.chapter));
+            }
+        } catch(e) { /* ignore */ }
+    }
+    loadChatHistory();
+
+    function appendMessage(role, content, chapter) {
+        chatEmpty.style.display = 'none';
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + role;
+        let html = '';
+        if (role === 'assistant' && chapter !== undefined) {
+            html += `<span class="context-badge">Ch. ${chapter + 1}</span>`;
+        }
+        html += escapeHtml(content);
+        div.innerHTML = html;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    async function sendMessage() {
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+        appendMessage('user', text);
+        chatSendBtn.disabled = true;
+        chatTyping.classList.add('active');
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        try {
+            const resp = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    book_id: BOOK_ID,
+                    chapter_index: currentChapterIndex,
+                    message: text
+                })
+            });
+            const data = await resp.json();
+            if (data.response) {
+                appendMessage('assistant', data.response, currentChapterIndex);
             } else {
-                console.log("Could not find index for", filename);
+                appendMessage('assistant', data.detail || 'Error: Could not get response');
+            }
+        } catch(e) {
+            appendMessage('assistant', 'Error: ' + e.message);
+        } finally {
+            chatSendBtn.disabled = false;
+            chatTyping.classList.remove('active');
+        }
+    }
+
+    chatSendBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', (e) => {
+        const sendMod = isMac ? e.metaKey : e.ctrlKey;
+        if (e.key === 'Enter' && sendMod) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    // Auto-resize textarea
+    chatInput.addEventListener('input', () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    });
+
+    // ===== Custom Confirm Modal =====
+    const confirmModal = document.getElementById('confirmModal');
+    const confirmOkBtn = document.getElementById('confirmOk');
+    const confirmCancelBtn = document.getElementById('confirmCancel');
+    let confirmResolve = null;
+
+    function showConfirm() {
+        return new Promise(resolve => {
+            confirmResolve = resolve;
+            confirmModal.classList.add('active');
+        });
+    }
+
+    confirmOkBtn.addEventListener('click', () => {
+        confirmModal.classList.remove('active');
+        if (confirmResolve) confirmResolve(true);
+    });
+    confirmCancelBtn.addEventListener('click', () => {
+        confirmModal.classList.remove('active');
+        if (confirmResolve) confirmResolve(false);
+    });
+    confirmModal.addEventListener('click', (e) => {
+        if (e.target === confirmModal) {
+            confirmModal.classList.remove('active');
+            if (confirmResolve) confirmResolve(false);
+        }
+    });
+
+    // ===== Chat Clear =====
+    document.getElementById('chatClearBtn').addEventListener('click', async () => {
+        const ok = await showConfirm();
+        if (!ok) return;
+        try {
+            await fetch(`/api/chat/history/${BOOK_ID}`, { method: 'DELETE' });
+            chatMessages.innerHTML = '';
+            chatEmpty.style.display = 'block';
+            chatMessages.appendChild(chatEmpty);
+        } catch(e) { /* ignore */ }
+    });
+
+    // ===== Settings Modal =====
+    const settingsModal = document.getElementById('settingsModal');
+    document.getElementById('chatSettingsBtn').addEventListener('click', async () => {
+        // Load current settings
+        try {
+            const resp = await fetch('/api/settings');
+            const data = await resp.json();
+            document.getElementById('settingEndpoint').value = data.endpoint || '';
+            document.getElementById('settingApiKey').value = '';
+            document.getElementById('settingApiKey').placeholder = data.api_key_set ? '••••••••' : 'Enter API key';
+            document.getElementById('settingDeployment').value = data.deployment_name || '';
+            document.getElementById('settingApiVersion').value = data.api_version || '2024-02-15-preview';
+        } catch(e) { /* ignore */ }
+        settingsModal.classList.add('active');
+    });
+
+    document.getElementById('settingsCancel').addEventListener('click', () => settingsModal.classList.remove('active'));
+    settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.classList.remove('active'); });
+
+    document.getElementById('settingsSave').addEventListener('click', async () => {
+        const status = document.getElementById('settingsStatus');
+        const body = {
+            endpoint: document.getElementById('settingEndpoint').value,
+            deployment_name: document.getElementById('settingDeployment').value,
+            api_version: document.getElementById('settingApiVersion').value,
+        };
+        const apiKey = document.getElementById('settingApiKey').value;
+        if (apiKey) body.api_key = apiKey;
+
+        try {
+            const resp = await fetch('/api/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (resp.ok) {
+                status.textContent = 'Settings saved!';
+                status.style.color = '#27ae60';
+                setTimeout(() => settingsModal.classList.remove('active'), 1000);
+            } else {
+                status.textContent = 'Failed to save settings';
+                status.style.color = '#e74c3c';
+            }
+        } catch(e) {
+            status.textContent = 'Error: ' + e.message;
+            status.style.color = '#e74c3c';
+        }
+    });
+
+    // ===== Reading Progress =====
+    const mainEl = document.getElementById('main');
+    const progressKey = `progress-${BOOK_ID}`;
+
+    // Restore scroll position or scroll to initial chapter
+    const savedScroll = localStorage.getItem(progressKey);
+    if (savedScroll) {
+        requestAnimationFrame(() => { mainEl.scrollTop = parseInt(savedScroll); });
+    } else if (currentChapterIndex > 0) {
+        requestAnimationFrame(() => scrollToChapter(currentChapterIndex));
+    }
+
+    // Save scroll position on scroll (debounced)
+    let scrollTimer;
+    mainEl.addEventListener('scroll', () => {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+            localStorage.setItem(progressKey, mainEl.scrollTop);
+        }, 300);
+    });
+
+    // ===== Chapter Tracker (IntersectionObserver) =====
+    function setActiveTocLink(idx) {
+        document.querySelectorAll('.toc-link').forEach(a => a.classList.remove('active'));
+        const href = chapterHrefs[idx];
+        if (href) {
+            const link = document.querySelector(`.toc-link[data-href="${href}"]`);
+            if (link) link.classList.add('active');
+        }
+    }
+
+    // Set initial TOC active link
+    setActiveTocLink(currentChapterIndex);
+
+    const chapterObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const idx = parseInt(entry.target.dataset.chapterIndex);
+                currentChapterIndex = idx;
+                document.getElementById('chapterCurrent').textContent = idx + 1;
+                setActiveTocLink(idx);
+            }
+        });
+    }, { root: mainEl, rootMargin: '-20% 0px -60% 0px' });
+
+    document.querySelectorAll('.chapter-section').forEach(s => chapterObserver.observe(s));
+
+    // ===== Keyboard Shortcuts =====
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    document.addEventListener('keydown', (e) => {
+        const mod = isMac ? e.metaKey : e.ctrlKey;
+        if (mod && e.key === 'b') {
+            e.preventDefault();
+            setSidebar(!sidebar.classList.contains('sidebar-visible'));
+        }
+        if (mod && e.key === '/') {
+            e.preventDefault();
+            setChat(!chatSidebar.classList.contains('sidebar-visible'));
+        }
+        if (e.key === 'Escape') {
+            // Close modals first, then chat, then sidebar
+            if (confirmModal.classList.contains('active')) {
+                confirmModal.classList.remove('active');
+                if (confirmResolve) confirmResolve(false);
+            } else if (settingsModal.classList.contains('active')) {
+                settingsModal.classList.remove('active');
+            } else if (chatSidebar.classList.contains('sidebar-visible')) {
+                setChat(false);
+            } else if (sidebar.classList.contains('sidebar-visible')) {
+                setSidebar(false);
             }
         }
-    </script>
-</body>
-</html>
+    });
+
+    // ===== Set shortcut hints based on platform =====
+    const modKey = isMac ? '⌘' : 'Ctrl';
+    document.getElementById('sidebarToggle').title = `Toggle sidebar (${modKey}+B)`;
+    document.getElementById('chatToggle').title = `Toggle chat (${modKey}+/)`;
+    chatInput.placeholder = `Ask about this chapter... (${modKey}+Enter)`;
+
+    // ===== Broken Image Handler =====
+    const fallbackCoverSvg = `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 659 1000" style="width:100%;max-width:500px;display:block;margin:20px auto;border-radius:12px;overflow:hidden">
+            <defs>
+                <linearGradient id="coverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#6366f1"/>
+                    <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+            </defs>
+            <rect width="659" height="1000" fill="url(#coverGrad)" rx="12"/>
+            <circle cx="520" cy="120" r="200" fill="rgba(255,255,255,0.06)"/>
+            <circle cx="100" cy="900" r="250" fill="rgba(255,255,255,0.04)"/>
+            <text x="329" y="460" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="-apple-system,system-ui,sans-serif" font-size="48" font-weight="700">${'{{ book.metadata.title }}'.replace(/'/g,"&#39;")}</text>
+            <text x="329" y="520" text-anchor="middle" fill="rgba(255,255,255,0.5)" font-family="-apple-system,system-ui,sans-serif" font-size="24">${'{{ book.metadata.authors|join(", ") }}'.replace(/'/g,"&#39;")}</text>
+            <path d="M290 580 h78 M300 600 h58 M310 620 h38" stroke="rgba(255,255,255,0.2)" stroke-width="2" stroke-linecap="round"/>
+        </svg>`;
+
+    // Handle HTML <img> errors
+    document.querySelectorAll('.book-content img').forEach(img => {
+        img.addEventListener('error', function() {
+            this.style.display = 'none';
+        });
+    });
+
+    // Handle SVG <image> errors (common in EPUB covers)
+    document.querySelectorAll('.book-content image').forEach(img => {
+        img.addEventListener('error', function() {
+            // Replace the entire SVG parent with our nice cover
+            const svgParent = this.closest('svg');
+            if (svgParent) {
+                const wrapper = svgParent.parentElement;
+                wrapper.innerHTML = fallbackCoverSvg;
+            }
+        });
+        // Also check if already failed (error may fire before listener)
+        if (img.href?.baseVal) {
+            const testImg = new Image();
+            testImg.onerror = () => {
+                const svgParent = img.closest('svg');
+                if (svgParent) {
+                    const wrapper = svgParent.parentElement;
+                    wrapper.innerHTML = fallbackCoverSvg;
+                }
+            };
+            testImg.src = img.href.baseVal;
+        }
+    });
+{% endblock %}

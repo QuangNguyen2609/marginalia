@@ -1,0 +1,314 @@
+Reader3 Full Feature Upgrade - Progress Report
+================================================
+
+Project: reader3-custom
+Date: 2026-03-15
+Status: All 6 phases implemented and tested
+
+
+STARTING POINT
+--------------
+- Minimal EPUB-only reader: FastAPI + Jinja2, ~425 lines total
+- 4 files: server.py, reader3.py, templates/library.html, templates/reader.html
+- No dark mode, no upload, no chat, no multi-format support
+- Separate reader3-docker/ repo with Docker support but relied on browser extension for LLM
+
+
+PHASE 1: Foundation - Base Template, Dark Mode, Liquid Glass CSS, Collapsible Sidebar
+-------------------------------------------------------------------------------------
+Files: templates/base.html (new), templates/library.html (rewrite), templates/reader.html (rewrite)
+
+- Created base.html with Jinja2 template inheritance
+  - CSS custom properties for light/dark theming (:root and :root.dark)
+  - .glass-panel class: backdrop-filter blur, semi-transparent bg, subtle borders
+  - Floating toolbar with opacity slider (0.1-1.0) and dark mode toggle (sun/moon)
+  - Background gradient with radial gradient overlays
+  - Flash-prevention script in <head> applies theme from localStorage before render
+  - Custom scrollbar styling
+
+- Dark mode toggle
+  - Toggles .dark class on <html>
+  - Persisted in localStorage('theme')
+  - Smooth CSS transitions on all themed properties
+
+- Collapsible left sidebar (reader.html)
+  - Fixed position, transform: translateX(-100%) with cubic-bezier transition
+  - Hamburger toggle button (fixed, z-index above sidebar)
+  - Nested TOC collapse: chevron icons on items with children, max-height transition
+  - TOC expanded state stored in localStorage keyed by book_id
+  - Sidebar open/closed state persisted in localStorage
+
+- Liquid glass treatment
+  - Library: glass cards on gradient/blurred background
+  - Reader: glass sidebar, glass nav footer, glass chat panel
+  - Opacity slider updates --glass-opacity CSS variable in real-time, persisted
+
+- Rewrote library.html and reader.html to extend base.html
+
+
+PHASE 2: File Upload from Browser
+----------------------------------
+Files: server.py, templates/library.html
+
+- POST /api/upload endpoint
+  - Validates file extension (.epub, .pdf, .mobi, .docx, .doc)
+  - Saves uploaded file to BOOKS_DIR
+  - Calls process_book() to parse the file
+  - Calls save_to_pickle() to persist
+  - Clears load_book_cached LRU cache
+  - Returns {"success": true, "book_id": folder_name}
+
+- Upload UI in library.html
+  - Drag-and-drop dropzone with dashed border + file input button
+  - Visual feedback on dragover (border color change, background tint)
+  - Spinner progress indicator during processing
+  - Error display for failed uploads
+  - Auto-reloads page on success
+
+- Added python-multipart dependency for file upload support
+
+
+PHASE 3: Multi-Format Support (PDF, MOBI, DOCX)
+-------------------------------------------------
+Files: reader3.py (major additions), pyproject.toml
+
+- Format router: process_book() dispatches by file extension
+  - .epub -> process_epub() (existing)
+  - .pdf  -> process_pdf() (new)
+  - .docx -> process_docx() (new)
+  - .doc  -> process_docx() (error: suggests converting to .docx)
+  - .mobi -> process_mobi() (new)
+
+- process_pdf() using PyMuPDF (fitz)
+  - page.get_text("html") for formatted content per page
+  - page.get_text() for plain text (LLM context)
+  - page.get_images() + doc.extract_image() for image extraction
+  - doc.get_toc() -> _build_pdf_toc() converts [(level, title, page)] to TOCEntry tree
+  - Metadata from doc.metadata dict
+
+- process_docx() using python-docx
+  - Iterates paragraphs, detects Heading 1/2/3 styles
+  - Groups paragraphs between headings into chapters
+  - Extracts images from relationship parts
+  - Builds TOC from heading hierarchy
+  - Fallback: single chapter if no headings found
+  - .doc files: raises clear error suggesting conversion
+
+- process_mobi() using mobi library
+  - mobi.extract() to get HTML content from MOBI container
+  - Parses extracted HTML with BeautifulSoup
+  - Splits content at h1/h2/h3 headings into chapters
+  - Cleans HTML with existing clean_html_content()
+  - Temp directory cleanup in finally block
+
+- New dependencies added to pyproject.toml:
+  - PyMuPDF>=1.24.0
+  - python-docx>=1.1.0
+  - mobi>=0.3.3
+  - httpx>=0.28.0
+  - python-multipart>=0.0.9
+
+- All formats produce the same Book/ChapterContent/TOCEntry/BookMetadata dataclasses
+
+
+PHASE 4: Built-in LLM Chat Sidebar
+------------------------------------
+Files: llm_chat.py (new), server.py (API endpoints), templates/reader.html (chat UI)
+
+- llm_chat.py - Azure OpenAI integration
+  - AzureConfig dataclass: endpoint, api_key, deployment_name, api_version
+  - chat_completion() using httpx async POST to Azure REST API (not openai SDK)
+  - load_config() / save_config() for config.json (gitignored)
+  - load_chat_history() / save_chat_history() / clear_chat_history()
+  - Chat history stored as JSON per book at {book_id}/chat_history.json
+
+- API endpoints in server.py:
+  - POST /api/chat - Send message, get LLM response with chapter context
+    - Builds system prompt with book title, chapter title, chapter plain text (8000 char limit)
+    - Includes last 10 messages from history
+    - Appends user + assistant messages to history with timestamps
+  - GET /api/settings - Returns config (API key masked)
+  - PUT /api/settings - Updates Azure config fields
+  - GET /api/chat/history/{book_id} - Retrieve full chat history
+  - DELETE /api/chat/history/{book_id} - Clear chat history
+
+- Chat sidebar UI (right panel, 380px)
+  - Glass-styled, toggleable with smooth slide animation
+  - Chat bubble toggle button (bottom-right, hides when chat open)
+  - Header with title + settings gear + clear trash + close button
+  - Scrollable messages area (user bubbles right/blue, assistant left/glass)
+  - Context badge showing chapter number on assistant messages
+  - "Thinking..." typing indicator
+  - Textarea with auto-resize + Send button
+  - Empty state message when no history
+
+- Settings modal
+  - Glass overlay with 4 form fields (endpoint, API key, deployment, version)
+  - Cancel/Save buttons with success/error feedback
+  - Loads current settings on open, masks API key
+
+- config.json added to .gitignore
+
+
+PHASE 5: Polish and Responsive Design
+--------------------------------------
+Files: templates/reader.html, templates/base.html
+
+- Mobile responsive
+  - Sidebars collapse by default on < 768px
+  - Chat sidebar becomes bottom sheet (full width, 60vh height, slides up)
+  - Content padding adjusts for mobile
+
+- Keyboard shortcuts (Mac-aware: uses Cmd on Mac, Ctrl elsewhere)
+  - Cmd/Ctrl+B: toggle TOC sidebar
+  - Cmd/Ctrl+/: toggle chat sidebar
+  - Cmd/Ctrl+Enter: send chat message
+  - ESC: close modals > chat > sidebar (priority order)
+  - Dynamic tooltip text shows correct modifier key per platform
+
+- Reading progress
+  - Saves scroll position per chapter/book in localStorage (debounced 300ms)
+  - Restores scroll position on page load via requestAnimationFrame
+
+- No-bounce sidebar restore
+  - body.no-transition class disables all sidebar/main transitions
+  - Applied before restoring sidebar states from localStorage
+  - Removed after double requestAnimationFrame (ensures browser has painted)
+
+- Toolbar repositioning
+  - Floating toolbar shifts left (right: 396px) when chat sidebar is open
+  - Prevents overlap with chat header buttons
+
+- Broken image fallback
+  - Detects failed SVG <image> tags (common in EPUB covers like xlink:href)
+  - Replaces with beautiful gradient cover SVG showing book title + author
+  - Also handles HTML <img> errors by hiding broken images
+
+- Custom confirm modal for chat deletion
+  - Glass-styled modal with trash icon, title, description
+  - Cancel (gray) and Delete (red) buttons
+  - Replaces browser native confirm() dialog
+  - Dismissable via ESC, clicking overlay, or Cancel button
+
+- Library book cards
+  - Generated SVG gradient covers with decorative circles
+  - 8 unique color pairs that cycle
+  - Book icon + title overlay on gradient
+  - Replaces plain emoji icon
+
+
+PHASE 6: Cleanup
+-----------------
+- Deleted reader3-docker/ folder (Docker, Dockerfile, compose, etc.)
+- Updated .gitignore: added config.json, *.pdf, *.mobi, *.docx, *.doc
+- Updated pyproject.toml version to 0.2.0 with new description
+
+
+TESTING (via Chrome browser automation)
+----------------------------------------
+All features verified working in browser:
+- Library page: glass cards with gradient covers, upload dropzone, dark mode toggle
+- Dark mode: smooth toggle, persists across pages, good contrast both themes
+- Opacity slider: adjusts glass panel transparency in real-time
+- Reader: clean serif typography, justified text, proper heading styles
+- TOC sidebar: opens via hamburger/Cmd+B, chapter list, active highlight, nested collapse
+- TOC navigation: clicking chapters navigates to correct spine index
+- Chat sidebar: opens via button/Cmd+/, empty state, input with platform-aware hints
+- Settings modal: all Azure config fields, save/cancel, proper feedback
+- Custom confirm modal: styled delete confirmation with Cancel/Delete buttons
+- Chapter navigation: Previous/Next in glass footer, section counter
+- Three-panel layout: TOC + content + chat simultaneously, content reflows
+- ESC key: closes modals then chat then sidebar in priority order
+- No-bounce: sidebars restore instantly on page load without animation
+- Fallback cover: broken EPUB cover images replaced with gradient + title SVG
+- Back to Library: link works, proper spacing below hamburger button
+
+
+SESSION 2: UI Improvements
+---------------------------
+Files: templates/reader.html, templates/base.html, server.py
+
+Fix 1 — Chat Toggle Button Jump (reader.html)
+- Root cause: body.no-transition rule did not cover .chat-toggle-btn
+- .chat-toggle-btn has transition: opacity 0.2s; when chat-open is in localStorage,
+  setChat(true) on load fades the button out visibly before transitions are suppressed
+- Fix: added .chat-toggle-btn to the body.no-transition selector block
+- Also added .chapter-counter to the same rule (for the new counter element)
+
+Fix 2 — Remove Opacity Slider (base.html)
+- Removed glass-opacity localStorage read from the early <head> script
+- Changed --glass-opacity default from 0.6 to 1 in :root CSS
+- Removed <label> + <input type="range"> opacity slider from toolbar HTML
+- Removed opacitySlider JS variable and event listener
+- Glass panels always render at full opacity; backdrop blur still active
+
+Fix 3 — Continuous Scroll: All Chapters on One Page (server.py, reader.html)
+- server.py: both /read/{book_id} and /read/{book_id}/{chapter_index} routes now pass
+  all_chapters=book.spine and initial_chapter=chapter_index to the template instead
+  of current_chapter/prev_idx/next_idx
+- reader.html CSS: removed .chapter-nav/.nav-btn/.chapter-info; added .chapter-section
+  (padding/divider between chapters) and .chapter-counter (fixed bottom-center pill)
+- reader.html HTML: replaced single chapter block with {% for chapter in all_chapters %}
+  loop rendering <section id="chapter-N" data-chapter-index="N"> elements; removed
+  Previous/Next nav div; added chapter counter element
+- reader.html TOC macro: removed server-side is_active check; added data-href attribute
+  for JS-driven active state via IntersectionObserver
+- reader.html JS: findAndGo() now calls scrollToChapter() (instant scrollIntoView)
+  instead of window.location.href; IntersectionObserver tracks which chapter is in the
+  upper viewport zone and updates counter + TOC active link; progress key changed from
+  per-chapter to per-book; chat sends currentChapterIndex; initial TOC active link set
+  on load
+
+Bug Fix — Nested <style> Tag CSS Parsing (reader.html)
+- Root cause: reader.html's {% block extra_styles %} injects a <style> tag inside
+  base.html's outer <style> tag. The HTML parser correctly closes the outer <style>
+  at the first </style>, so both tags are parsed. However, the CSS parser sees the
+  literal text "<style>" inside the CSS stream and uses error recovery: it treats
+  "<style>" + the next rule selector ("body") as one invalid qualified rule prelude,
+  consuming "body { display: flex; height: 100vh; overflow: hidden; }" as its block
+  and discarding it. All subsequent rules parse correctly.
+- Fix: added a sacrificial :root {} rule as the first rule after <style> so that
+  error recovery consumes "<style> :root {}" as the invalid rule, and
+  "body { display: flex; ... }" is then parsed correctly as its own rule.
+
+Bug Fix — Flex Layout Not Constraining #main Height (reader.html)
+- Root cause: with all chapters rendered, #main's content height grew to ~440k px.
+  In a flex row container, flex items have min-height: auto by default, which means
+  the minimum height equals the content height. This overrides align-items: stretch,
+  so #main expanded to full content height instead of being constrained to 100vh.
+  Consequently the window scrolled instead of #main, breaking IntersectionObserver
+  (which had root: mainEl) and progress save/restore (mainEl.scrollTop was always 0).
+- Fix: added min-height: 0 to #main, allowing flex stretch to constrain it to the
+  viewport height and enabling proper internal scrolling.
+
+Fix 4 — Chapter Counter Sidebar Awareness (reader.html)
+- Counter used position: fixed with left: 50%; transform: translateX(-50%) which
+  is viewport-center, not reading-area-center. Opening the TOC or chat sidebar
+  caused the counter to sit off-center.
+- Fix: changed counter to left: 0; right: 0; text-align: center with margin-left/right
+  transitions matching body.sidebar-open and body.chat-open rules (mirroring #main),
+  so the counter stays centered in the reading area as sidebars open/close.
+
+Fix 5 — Instant TOC Navigation (reader.html)
+- scrollIntoView({ behavior: 'smooth' }) caused long animated scrolls when jumping
+  between distant chapters (e.g. chapter 1 to chapter 20), making users dizzy.
+- Fix: changed to behavior: 'instant' for snappy chapter jumps.
+
+Fix 6 — Send Button Icon (reader.html)
+- "Send" text replaced with an up-arrow SVG icon; button resized to 40×40px square
+  with flex centering; removed font-size/font-weight/white-space properties.
+
+
+FILE SUMMARY
+------------
+| File                    | Action   | Lines | Description                                    |
+|-------------------------|----------|-------|------------------------------------------------|
+| templates/base.html     | Created  | ~150  | Shared template: CSS vars, glass, dark mode    |
+| templates/library.html  | Rewrite  | ~240  | Library with upload, gradient covers            |
+| templates/reader.html   | Rewrite  | ~1050 | Reader with continuous scroll, TOC, chat       |
+| server.py               | Rewrite  | ~260  | Upload, chat, settings, history API endpoints  |
+| reader3.py              | Extended | ~660  | Added PDF, DOCX, MOBI processors + router     |
+| llm_chat.py             | Created  | ~85   | Azure OpenAI integration via httpx             |
+| pyproject.toml          | Edited   | ~18   | Added 5 new dependencies, bumped version       |
+| .gitignore              | Edited   | +6    | Added config.json, book file extensions        |
+| reader3-docker/         | Deleted  | -     | Entire folder removed                          |
