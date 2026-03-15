@@ -340,6 +340,39 @@ Result
 - Pages load lazily as user scrolls (800px pre-load margin)
 
 
+SESSION 4: Text Selection Context for Chat
+-------------------------------------------
+Files: templates/reader.html, server.py
+
+Feature — Highlight text to use as chat context
+- When the user selects/highlights text in the reading area (#main), a quote chip
+  appears above the chat input showing a preview of the selected passage (up to 2 lines).
+- The chip has a label "Selected:" and an × dismiss button to clear the selection.
+- Selecting new text replaces any previous selection.
+- On send, the selected text is:
+  - Shown as a visual quote block inside the user's chat bubble (italic-styled, with
+    a left border) so the conversation history is self-explanatory.
+  - Sent to the backend as selected_text field and saved to chat history JSON.
+  - Injected into the LLM messages as [Highlighted passage: "..."] prepended to the
+    user message, so the model knows exactly which passage is being referenced,
+    independent of the chapter text already in the system prompt.
+- The quote chip clears automatically on send.
+- History reload: loadChatHistory() passes msg.selected_text to appendMessage() so
+  previously quoted passages render correctly when reopening a conversation.
+
+Changes:
+- reader.html CSS: .selection-quote / .selection-quote-* chip styles,
+  .chat-msg.user .quote-block style for the in-bubble quote rendering.
+- reader.html HTML: <div id="selectionQuote"> chip inserted above .chat-input-container.
+- reader.html JS: selectedText variable + setSelectedText(), mouseup listener on #main,
+  dismiss button handler; appendMessage() updated with quotedText 4th param;
+  sendMessage() captures quoteContext before clearing, passes it to appendMessage and
+  to the fetch payload as selected_text.
+- server.py: selected_text extracted from request body; user_content built with
+  [Highlighted passage: ...] prefix when present; history entry stores selected_text
+  field; history replay also injects the prefix for past messages with selections.
+
+
 FILE SUMMARY
 ------------
 | File                    | Action   | Lines | Description                                    |
