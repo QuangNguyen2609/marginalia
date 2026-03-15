@@ -673,7 +673,8 @@ if __name__ == "__main__":
 
     input_file = sys.argv[1]
     assert os.path.exists(input_file), "File not found."
-    out_dir = os.path.splitext(input_file)[0] + "_data"
+    stem = os.path.splitext(os.path.basename(input_file))[0]
+    out_dir = os.path.join("library", stem + "_data")
 
     book_obj = process_book(input_file, out_dir)
     save_to_pickle(book_obj, out_dir)
