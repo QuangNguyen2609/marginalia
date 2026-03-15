@@ -299,6 +299,47 @@ Fix 6 — Send Button Icon (reader.html)
   with flex centering; removed font-size/font-weight/white-space properties.
 
 
+SESSION 3: PDF Rendering via PDF.js
+-------------------------------------
+Files: reader3.py, server.py, templates/base.html, templates/reader.html
+
+Root Cause of PDF Issues
+- PyMuPDF's get_svg_image() converts text to glyph path outlines (vector shapes),
+  not actual SVG <text> elements. Result: fonts rendered wrong (path artifacts),
+  text not selectable, not copyable.
+
+Fix — Switch to PDF.js (browser-side rendering)
+- reader3.py: process_pdf() now copies source PDF to output_dir/source.pdf via
+  shutil.copy2(). Removed all SVG generation. Each chapter's content is a
+  <div class="pdf-page-placeholder" data-page="N" style="aspect-ratio:W/H"></div>
+  placeholder (aspect-ratio still needed for accurate TOC scroll positions before
+  JS renders the canvas).
+- server.py: Added GET /read/{book_id}/source.pdf route to serve the PDF file.
+  IMPORTANT: route must be defined BEFORE /read/{book_id}/{chapter_index} — FastAPI
+  returns 422 (not 404) when {chapter_index: int} fails to parse "source.pdf",
+  and does not fall through to the next route.
+  Added pdf_needs_reprocess flag: if source.pdf missing (old pickles), template
+  shows a re-upload notice instead of broken content.
+- templates/base.html: Added {% block head_scripts %}{% endblock %} before </head>
+  so child templates can inject <script> tags.
+- templates/reader.html: For PDF books:
+  - Loads pdf.min.js (PDF.js 3.11.174) from CDN in head_scripts block
+  - CSS: .pdf-page-placeholder (sized box before render), .pdf-page-wrapper
+    (position:relative container), .textLayer (position:absolute inset:0,
+    spans with color:transparent for invisible-but-selectable text)
+  - JS: pdfjsLib.getDocument() loads PDF, IntersectionObserver lazily fires
+    renderPDFPage() for each chapter-section entering viewport (rootMargin 800px).
+    Each page: canvas rendered at container width (scale = containerWidth / pageWidth),
+    then text layer rendered via pdfjsLib.renderTextLayer({textContent, container,
+    viewport}) for selectable/copyable text. Placeholder replaced with wrapper div.
+
+Result
+- Correct font rendering (browser's font engine, not path outlines)
+- Text is fully selectable and copyable
+- TOC navigation works (aspect-ratio placeholder keeps scroll positions accurate)
+- Pages load lazily as user scrolls (800px pre-load margin)
+
+
 FILE SUMMARY
 ------------
 | File                    | Action   | Lines | Description                                    |
