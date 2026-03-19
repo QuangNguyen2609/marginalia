@@ -24,7 +24,8 @@
     /* Disable transitions while resizing chat panel */
     body.chat-resizing #chatSidebar,
     body.chat-resizing #main,
-    body.chat-resizing .chapter-counter {
+    body.chat-resizing .chapter-counter,
+    body.chat-resizing .pdf-zoom-controls {
         transition: none !important;
     }
 
@@ -200,7 +201,7 @@
 
     /* PDF mode — wider, tighter padding, page cards */
     body.pdf-mode .content-container {
-        max-width: min(860px, calc(100vw - 40px));
+        max-width: none;
         padding: 32px 16px 40px;
     }
     body.pdf-mode .chapter-section {
@@ -224,7 +225,7 @@
         border-radius: 4px;
         box-shadow: 0 2px 12px rgba(0,0,0,0.18);
     }
-    .pdf-page-wrapper canvas { display: block; }
+    .pdf-page-wrapper canvas { display: block; width: 100%; height: auto; }
     /* PDF.js text layer — invisible but selectable */
     .textLayer {
         position: absolute;
@@ -243,6 +244,47 @@
         transform-origin: 0% 0%;
     }
     .textLayer ::selection { background: rgba(0, 0, 255, 0.3); color: transparent; }
+
+    /* PDF Zoom Controls */
+    .pdf-zoom-controls {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 500;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--glass-border);
+        border-radius: 24px;
+        padding: 4px 8px;
+        transition: right var(--transition);
+    }
+    body.chat-open .pdf-zoom-controls { right: calc(var(--chat-width) + 24px); }
+    .pdf-zoom-btn {
+        width: 32px; height: 32px;
+        border: none; background: none;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        color: var(--text-secondary);
+        transition: background var(--transition), color var(--transition);
+        font-size: 18px; line-height: 1;
+    }
+    .pdf-zoom-btn:hover { background: var(--border); color: var(--text-primary); }
+    .pdf-zoom-btn:active { transform: scale(0.92); }
+    .pdf-zoom-label {
+        min-width: 48px;
+        text-align: center;
+        font-size: 0.78em;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+        user-select: none;
+        cursor: pointer;
+    }
+    .pdf-zoom-label:hover { color: var(--text-primary); }
 
     /* Fixed chapter counter at bottom center of the reading area */
     .chapter-counter {
@@ -935,6 +977,19 @@
     <div class="chapter-counter" id="chapterCounter">
         <span class="counter-pill"><span id="chapterCurrent">{{ initial_chapter + 1 }}</span> / {{ all_chapters|length }}</span>
     </div>
+
+    {% if is_pdf and not pdf_needs_reprocess %}
+    <!-- PDF Zoom Controls -->
+    <div class="pdf-zoom-controls" id="pdfZoomControls">
+        <button class="pdf-zoom-btn" id="zoomOut" title="Zoom out ({{ 'Cmd' if 'Mac' in request.headers.get('user-agent','') else 'Ctrl' }}+−)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <span class="pdf-zoom-label" id="zoomLabel" title="Click to reset zoom">100%</span>
+        <button class="pdf-zoom-btn" id="zoomIn" title="Zoom in ({{ 'Cmd' if 'Mac' in request.headers.get('user-agent','') else 'Ctrl' }}++)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+    </div>
+    {% endif %}
 
     <!-- CHAT SIDEBAR (Right) -->
     <div id="chatSidebar">
@@ -1907,26 +1962,100 @@
 
     document.querySelectorAll('.chapter-section').forEach(s => chapterObserver.observe(s));
 
-    // ===== PDF: PDF.js canvas rendering with text layer =====
+    // ===== PDF: PDF.js canvas rendering with text layer + HiDPI + Zoom =====
     {% if is_pdf and not pdf_needs_reprocess %}
     document.body.classList.add('pdf-mode');
     pdfjsLib.GlobalWorkerOptions.workerSrc =
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     const PDF_URL = '/read/{{ book_id }}/source.pdf';
-    const renderedPages = new Set();
+    const renderedPages = new Map(); // pageNum -> { wrapper, page }
+
+    // Zoom state
+    const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+    const DEFAULT_ZOOM_IDX = ZOOM_STEPS.indexOf(1.0);
+    let currentZoomIdx = DEFAULT_ZOOM_IDX;
+    const zoomLabel = document.getElementById('zoomLabel');
+    const contentContainer = document.querySelector('.content-container');
+
+    function getZoomLevel() { return ZOOM_STEPS[currentZoomIdx]; }
+
+    function updateZoomLabel() {
+        zoomLabel.textContent = Math.round(getZoomLevel() * 100) + '%';
+    }
+
+    // Compute the base container max-width from the first PDF page at zoom=1
+    let baseMaxWidth = 860; // fallback
+
+    let reRenderTimer = null;
+
+    // Scroll-anchored layout change: finds the page at viewport center,
+    // runs a callback that changes layout, then corrects scrollTop synchronously.
+    function withScrollAnchor(layoutChange) {
+        const viewH = mainEl.clientHeight;
+        const mainRect = mainEl.getBoundingClientRect();
+        const scrollCenter = mainEl.scrollTop + viewH / 2;
+
+        // Find anchor: the page element whose offset range contains scrollCenter
+        let anchorEl = null, anchorRatio = 0;
+        const candidates = contentContainer.querySelectorAll('.pdf-page-wrapper, .pdf-page-placeholder');
+        for (const el of candidates) {
+            const rect = el.getBoundingClientRect();
+            const height = rect.height;
+            if (height === 0) continue;
+            // Convert viewport-relative rect to scroll-relative position
+            const top = rect.top - mainRect.top + mainEl.scrollTop;
+            if (top + height > scrollCenter) {
+                anchorEl = el;
+                anchorRatio = (scrollCenter - top) / height;
+                break;
+            }
+        }
+
+        // Run the layout change
+        layoutChange();
+
+        if (!anchorEl) return;
+
+        // Force synchronous reflow so measurements below reflect new layout
+        void contentContainer.offsetHeight;
+
+        // Recompute anchor position after layout change using getBoundingClientRect
+        const newMainRect = mainEl.getBoundingClientRect();
+        const newRect = anchorEl.getBoundingClientRect();
+        const newTop = newRect.top - newMainRect.top + mainEl.scrollTop;
+        const newHeight = newRect.height || 1;
+
+        mainEl.scrollTop = newTop + newHeight * anchorRatio - viewH / 2;
+    }
+
+    function applyZoom() {
+        const zoom = getZoomLevel();
+        const newMax = Math.round(baseMaxWidth * zoom);
+
+        withScrollAnchor(() => {
+            contentContainer.style.maxWidth = newMax + 'px';
+        });
+        updateZoomLabel();
+
+        // Debounce the expensive canvas re-render for sharpness
+        clearTimeout(reRenderTimer);
+        reRenderTimer = setTimeout(() => {
+            withScrollAnchor(() => { reRenderAllPages(); });
+        }, 400);
+    }
 
     async function renderPDFPage(pageNum, placeholder) {
-        if (renderedPages.has(pageNum)) return;
-        renderedPages.add(pageNum);
-
         let page;
         try { page = await pdfDoc.getPage(pageNum); } catch(e) { return; }
 
-        const containerWidth = placeholder.offsetWidth || 800;
+        const dpr = window.devicePixelRatio || 1;
+        const containerWidth = placeholder.offsetWidth || contentContainer.offsetWidth || 800;
         const unscaled = page.getViewport({ scale: 1 });
-        const scale = containerWidth / unscaled.width;
-        const viewport = page.getViewport({ scale });
+        const cssScale = containerWidth / unscaled.width;
+        const renderScale = cssScale * dpr;
+        const viewport = page.getViewport({ scale: renderScale });
+        const cssViewport = page.getViewport({ scale: cssScale });
 
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(viewport.width);
@@ -1934,13 +2063,16 @@
 
         const textLayerDiv = document.createElement('div');
         textLayerDiv.className = 'textLayer';
-        textLayerDiv.style.setProperty('--scale-factor', scale);
+        textLayerDiv.style.setProperty('--scale-factor', cssScale);
 
         const wrapper = document.createElement('div');
         wrapper.className = 'pdf-page-wrapper';
+        wrapper.dataset.page = pageNum;
         wrapper.appendChild(canvas);
         wrapper.appendChild(textLayerDiv);
         placeholder.replaceWith(wrapper);
+
+        renderedPages.set(pageNum, { wrapper, page });
 
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
@@ -1949,15 +2081,122 @@
             pdfjsLib.renderTextLayer({
                 textContentSource: textContent,
                 container: textLayerDiv,
-                viewport,
+                viewport: cssViewport,
                 textDivs: [],
             });
         } catch(e) { /* text layer optional */ }
     }
 
+    function reRenderAllPages() {
+        // Phase 1 (synchronous): resize all canvases so layout settles in one reflow.
+        // Phase 2 (async): re-paint pixels and text layers — no layout change.
+        const dpr = window.devicePixelRatio || 1;
+        const jobs = [];
+
+        renderedPages.forEach(({ wrapper, page }, pageNum) => {
+            const canvas = wrapper.querySelector('canvas');
+            if (!canvas) return;
+            const containerWidth = wrapper.offsetWidth || contentContainer.offsetWidth || 800;
+            const unscaled = page.getViewport({ scale: 1 });
+            const cssScale = containerWidth / unscaled.width;
+            const renderScale = cssScale * dpr;
+            const viewport = page.getViewport({ scale: renderScale });
+            const cssViewport = page.getViewport({ scale: cssScale });
+
+            // Synchronous: set canvas intrinsic size (clears canvas but fixes layout)
+            canvas.width = Math.round(viewport.width);
+            canvas.height = Math.round(viewport.height);
+
+            jobs.push({ canvas, wrapper, page, viewport, cssViewport, cssScale });
+        });
+
+        // Phase 2: async pixel rendering (no layout shifts)
+        for (const { canvas, wrapper, page, viewport, cssViewport, cssScale } of jobs) {
+            page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise.then(() => {
+                const tl = wrapper.querySelector('.textLayer');
+                if (tl) {
+                    tl.innerHTML = '';
+                    tl.style.setProperty('--scale-factor', cssScale);
+                    page.getTextContent().then(tc => {
+                        pdfjsLib.renderTextLayer({
+                            textContentSource: tc,
+                            container: tl,
+                            viewport: cssViewport,
+                            textDivs: [],
+                        });
+                    }).catch(() => {});
+                }
+            }).catch(() => {});
+        }
+    }
+
+    // Zoom controls
+    document.getElementById('zoomIn').addEventListener('click', () => {
+        if (currentZoomIdx < ZOOM_STEPS.length - 1) {
+            currentZoomIdx++;
+            applyZoom();
+        }
+    });
+    document.getElementById('zoomOut').addEventListener('click', () => {
+        if (currentZoomIdx > 0) {
+            currentZoomIdx--;
+            applyZoom();
+        }
+    });
+    zoomLabel.addEventListener('click', () => {
+        currentZoomIdx = DEFAULT_ZOOM_IDX;
+        applyZoom();
+    });
+
+    // Keyboard zoom: Cmd/Ctrl + / Cmd/Ctrl -
+    document.addEventListener('keydown', (e) => {
+        const mod = (navigator.platform.toUpperCase().indexOf('MAC') >= 0) ? e.metaKey : e.ctrlKey;
+        if (!mod) return;
+        if (e.key === '=' || e.key === '+') {
+            e.preventDefault();
+            if (currentZoomIdx < ZOOM_STEPS.length - 1) { currentZoomIdx++; applyZoom(); }
+        } else if (e.key === '-') {
+            e.preventDefault();
+            if (currentZoomIdx > 0) { currentZoomIdx--; applyZoom(); }
+        } else if (e.key === '0') {
+            e.preventDefault();
+            currentZoomIdx = DEFAULT_ZOOM_IDX;
+            applyZoom();
+        }
+    });
+
+    // Pinch-to-zoom on trackpad (wheel events with ctrlKey)
+    // Accumulate delta and debounce to avoid firing on every micro-event
+    let pinchDelta = 0;
+    let pinchTimer = null;
+    mainEl.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        pinchDelta += e.deltaY;
+        clearTimeout(pinchTimer);
+        pinchTimer = setTimeout(() => {
+            if (pinchDelta < -2 && currentZoomIdx < ZOOM_STEPS.length - 1) {
+                currentZoomIdx++;
+                applyZoom();
+            } else if (pinchDelta > 2 && currentZoomIdx > 0) {
+                currentZoomIdx--;
+                applyZoom();
+            }
+            pinchDelta = 0;
+        }, 60);
+    }, { passive: false });
+
     let pdfDoc = null;
     pdfjsLib.getDocument(PDF_URL).promise.then(doc => {
         pdfDoc = doc;
+
+        // Set baseMaxWidth from first page dimensions
+        doc.getPage(1).then(firstPage => {
+            const unscaled = firstPage.getViewport({ scale: 1 });
+            baseMaxWidth = Math.round(unscaled.width + 32); // + padding
+            contentContainer.style.maxWidth = baseMaxWidth + 'px';
+        });
+
         const pdfObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (!entry.isIntersecting) return;
