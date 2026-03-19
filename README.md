@@ -22,6 +22,22 @@ This project was vibe coded to explore reading books alongside an LLM. Inspired 
 
 The project uses [uv](https://docs.astral.sh/uv/).
 
+### macOS app (recommended)
+
+Build and install Marginalia as a native macOS app:
+
+```bash
+./build-app.sh
+```
+
+**Requirements:** Xcode Command Line Tools (`xcode-select --install`), [uv](https://docs.astral.sh/uv/), and Pillow (`pip3 install Pillow`).
+
+This installs **Marginalia.app** to `/Applications`. Double-click to launch — it starts the server and opens your browser automatically. Quitting the app (Cmd+Q or closing the browser tab) stops the server and cleans up.
+
+The build script auto-detects the project directory and `uv` location — no configuration needed. If you move the project folder, just re-run `./build-app.sh` from the new location.
+
+### Manual
+
 ```bash
 uv run server.py
 ```

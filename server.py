@@ -26,6 +26,16 @@ BOOKS_DIR = "library"
 ALLOWED_EXTENSIONS = {".epub", ".pdf", ".mobi", ".docx", ".doc"}
 
 
+@app.get("/favicon.png")
+async def favicon():
+    return FileResponse("templates/favicon.png", media_type="image/png")
+
+
+@app.get("/apple-touch-icon.png")
+async def apple_touch_icon():
+    return FileResponse("templates/apple-touch-icon.png", media_type="image/png")
+
+
 @lru_cache(maxsize=10)
 def load_book_cached(folder_name: str) -> Optional[Book]:
     """Loads the book from the pickle file. Cached to avoid re-reading disk."""
