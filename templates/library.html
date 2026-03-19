@@ -265,6 +265,9 @@
         color: var(--text-secondary);
         font-size: 0.85em;
         margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -448,11 +451,11 @@
             <!-- Body -->
             <div class="book-card-body">
                 <div class="book-title">{{ book.title }}</div>
-                <div class="book-author">{{ book.author or "Unknown author" }}</div>
+                <div class="book-author">
+                    {{ book.author or "Unknown author" }}
+                    <span class="meta-pill">{{ book.chapters }} pages</span>
+                </div>
                 <div class="book-card-footer">
-                    <div class="book-meta">
-                        <span class="meta-pill">{{ book.chapters }} pages</span>
-                    </div>
                     <span class="read-arrow">
                         Read
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
