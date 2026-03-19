@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from reader3 import Book, BookMetadata, ChapterContent, TOCEntry, process_book, save_to_pickle
+from marginalia import Book, BookMetadata, ChapterContent, TOCEntry, process_book, save_to_pickle
 from llm_chat import (
     LLMConfig, load_config, save_config,
     load_chat_history, save_chat_history, clear_chat_history,

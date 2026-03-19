@@ -47,7 +47,7 @@ Visit [localhost:8123](http://localhost:8123/) to open the library. Upload books
 To pre-register a book from the command line:
 
 ```bash
-uv run reader3.py dracula.epub
+uv run marginalia.py dracula.epub
 ```
 
 ## LLM Chat

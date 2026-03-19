@@ -80,7 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         kill.waitUntilExit()
 
         // Ensure log file exists
-        let logPath = "\(projectDir)/reader3.log"
+        let logPath = "\(projectDir)/marginalia.log"
         FileManager.default.createFile(atPath: logPath, contents: nil)
 
         let process = Process()

@@ -667,7 +667,7 @@ if __name__ == "__main__":
 
     import sys
     if len(sys.argv) < 2:
-        print("Usage: python reader3.py <file>")
+        print("Usage: python marginalia.py <file>")
         print("Supported formats: .epub, .pdf, .docx, .mobi")
         sys.exit(1)
 
