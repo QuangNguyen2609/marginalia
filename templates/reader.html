@@ -244,6 +244,10 @@
         transform-origin: 0% 0%;
     }
     .textLayer ::selection { background: rgba(0, 0, 255, 0.3); color: transparent; }
+    .textLayer span.reader-highlight-pdf {
+        background: rgba(201, 115, 64, 0.3);
+        border-radius: 2px;
+    }
 
     /* PDF Zoom Controls */
     .pdf-zoom-controls {
@@ -553,30 +557,38 @@
         position: relative;
     }
 
-    /* Text-selection quote chip (appears above input box) */
-    .selection-quote {
+    /* Multi-selection chips container */
+    .selection-chips {
         display: none;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 6px;
+        max-height: 120px;
+        overflow-y: auto;
+    }
+    .selection-chips.active { display: flex; }
+
+    .selection-chip {
+        display: flex;
         align-items: flex-start;
         gap: 8px;
-        margin-bottom: 6px;
-        padding: 6px 10px;
+        padding: 5px 10px;
         background: rgba(201, 115, 64, 0.09);
         border-left: 3px solid var(--accent);
         border-radius: 0 8px 8px 0;
         font-size: 0.78em;
         color: var(--text-secondary);
         line-height: 1.4;
+        animation: chipSlideIn 0.15s ease-out;
     }
-    .selection-quote.active { display: flex; }
-    .selection-quote-label {
-        font-size: 0.72em;
-        color: var(--accent);
-        font-weight: 600;
-        white-space: nowrap;
-        flex-shrink: 0;
-        padding-top: 1px;
+    html.dark .selection-chip { background: rgba(201, 115, 64, 0.12); }
+
+    @keyframes chipSlideIn {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
     }
-    .selection-quote-text {
+
+    .selection-chip-text {
         flex: 1;
         overflow: hidden;
         display: -webkit-box;
@@ -584,13 +596,82 @@
         -webkit-box-orient: vertical;
         word-break: break-word;
     }
-    .selection-quote-dismiss {
+
+    .selection-chip-dismiss {
         background: none; border: none; cursor: pointer;
         color: var(--text-muted); font-size: 16px; padding: 0;
         flex-shrink: 0; line-height: 1;
     }
-    .selection-quote-dismiss:hover { color: var(--text-primary); }
-    html.dark .selection-quote { background: rgba(201, 115, 64, 0.12); }
+    .selection-chip-dismiss:hover { color: var(--text-primary); }
+
+    /* Floating Explain button — appears above text selection */
+    .explain-popup {
+        display: none;
+        position: absolute;
+        z-index: 600;
+        pointer-events: none;
+        animation: explainFadeIn 0.12s ease-out;
+    }
+    .explain-popup.visible {
+        display: block;
+        pointer-events: auto;
+    }
+
+    @keyframes explainFadeIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .explain-popup-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        font-size: 0.8em;
+        font-weight: 500;
+        color: var(--accent);
+        cursor: pointer;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        white-space: nowrap;
+        transition: background 0.15s, box-shadow 0.15s;
+    }
+    .explain-popup-btn:hover {
+        background: rgba(201, 115, 64, 0.08);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+    }
+    html.dark .explain-popup-btn {
+        background: #2a2a2a;
+        border-color: #3a3a3a;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    html.dark .explain-popup-btn:hover {
+        background: #333;
+    }
+
+    .explain-icon {
+        flex-shrink: 0;
+        color: var(--accent);
+    }
+
+    /* Highlight marks in book content */
+    mark.reader-highlight {
+        background: rgba(201, 115, 64, 0.2);
+        border-radius: 2px;
+        padding: 0 1px;
+        transition: background 0.2s;
+    }
+    mark.reader-highlight:hover {
+        background: rgba(201, 115, 64, 0.35);
+    }
+    html.dark mark.reader-highlight {
+        background: rgba(201, 115, 64, 0.25);
+    }
+    html.dark mark.reader-highlight:hover {
+        background: rgba(201, 115, 64, 0.4);
+    }
 
     /* Quoted passage block inside user chat bubbles */
     .chat-msg.user .quote-block {
@@ -955,7 +1036,15 @@
     </div>
 
     <!-- MAIN CONTENT -->
-    <div id="main">
+    <div id="main" style="position:relative;">
+        <div class="explain-popup" id="explainPopup">
+            <button class="explain-popup-btn" id="explainBtn">
+                <svg class="explain-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 18h6M10 22h4M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-2.26C10.19 13.47 9 11.38 9 9a7 7 0 0 1 3-5.74z"/>
+                </svg>
+                Explain
+            </button>
+        </div>
         <div class="content-container">
             {% if pdf_needs_reprocess %}
             <div style="text-align:center; padding: 80px 20px; color: var(--text-muted);">
@@ -1034,11 +1123,7 @@
             </div>
         </div>
         <div class="chat-input-area" id="chatInputArea">
-            <div class="selection-quote" id="selectionQuote">
-                <span class="selection-quote-label">Selected:</span>
-                <span class="selection-quote-text" id="selectionQuoteText"></span>
-                <button class="selection-quote-dismiss" id="selectionQuoteDismiss" title="Clear selection">×</button>
-            </div>
+            <div class="selection-chips" id="selectionChips"></div>
             <div class="chat-input-container">
                 <textarea id="chatInput" placeholder="Reply…" rows="1"></textarea>
                 <div class="chat-input-footer">
@@ -1248,33 +1333,196 @@
         });
     })();
 
-    // ===== Text Selection Context =====
-    let selectedText = '';
-    const selectionQuote = document.getElementById('selectionQuote');
-    const selectionQuoteText = document.getElementById('selectionQuoteText');
-    const selectionQuoteDismiss = document.getElementById('selectionQuoteDismiss');
+    // ===== Multi-Select Text Selection Context =====
+    const MAX_SELECTIONS = 3;
+    let selectedTexts = []; // Array of { id, text }
+    let _selectionIdCounter = 0;
+    const selectionChipsContainer = document.getElementById('selectionChips');
 
-    function setSelectedText(text) {
-        selectedText = text;
-        if (text) {
-            selectionQuoteText.textContent = text;
-            selectionQuote.classList.add('active');
-        } else {
-            selectionQuote.classList.remove('active');
+    function addSelection(text) {
+        if (!text || text.length <= 5) return null;
+        // Avoid duplicate selections
+        if (selectedTexts.some(s => s.text === text)) return null;
+        const id = ++_selectionIdCounter;
+        if (selectedTexts.length >= MAX_SELECTIONS) {
+            const removed = selectedTexts.shift();
+            removeHighlightMark(removed.id);
+        }
+        selectedTexts.push({ id, text });
+        renderSelectionChips();
+        return id;
+    }
+
+    function removeSelection(id) {
+        selectedTexts = selectedTexts.filter(s => s.id !== id);
+        removeHighlightMark(id);
+        renderSelectionChips();
+    }
+
+    function clearAllSelections() {
+        selectedTexts.forEach(s => removeHighlightMark(s.id));
+        selectedTexts = [];
+        renderSelectionChips();
+    }
+
+    function renderSelectionChips() {
+        selectionChipsContainer.innerHTML = '';
+        if (selectedTexts.length === 0) {
+            selectionChipsContainer.classList.remove('active');
+            return;
+        }
+        selectionChipsContainer.classList.add('active');
+        selectedTexts.forEach(sel => {
+            const chip = document.createElement('div');
+            chip.className = 'selection-chip';
+            chip.dataset.selectionId = sel.id;
+            chip.innerHTML = `
+                <span class="selection-chip-text">${escapeHtml(sel.text)}</span>
+                <button class="selection-chip-dismiss" title="Remove selection">&times;</button>
+            `;
+            chip.querySelector('.selection-chip-dismiss').addEventListener('click', () => {
+                removeSelection(sel.id);
+            });
+            selectionChipsContainer.appendChild(chip);
+        });
+    }
+
+    // ===== Highlight Marks in Book Text =====
+    function addHighlightMark(id, range) {
+        if (!range) return;
+        const startEl = range.startContainer.parentElement;
+        if (!startEl) return;
+
+        const textLayer = startEl.closest('.textLayer');
+        if (textLayer) {
+            // PDF: add class directly to the absolutely-positioned spans
+            const spans = textLayer.querySelectorAll('span');
+            spans.forEach(span => {
+                if (range.intersectsNode(span) && range.toString().length > 0) {
+                    span.classList.add('reader-highlight-pdf');
+                    span.dataset.selectionId = id;
+                }
+            });
+            return;
+        }
+
+        const bookContent = startEl.closest('.book-content');
+        if (!bookContent) return;
+
+        // EPUB: wrap text nodes in <mark> elements
+        try {
+            const textNodes = [];
+            const root = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+                ? range.commonAncestorContainer.parentNode
+                : range.commonAncestorContainer;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            while (walker.nextNode()) {
+                if (range.intersectsNode(walker.currentNode)) textNodes.push(walker.currentNode);
+            }
+
+            textNodes.forEach(textNode => {
+                const nodeRange = document.createRange();
+                nodeRange.selectNodeContents(textNode);
+                if (textNode === range.startContainer) nodeRange.setStart(textNode, range.startOffset);
+                if (textNode === range.endContainer) nodeRange.setEnd(textNode, range.endOffset);
+                if (nodeRange.toString().length === 0) return;
+
+                const mark = document.createElement('mark');
+                mark.className = 'reader-highlight';
+                mark.dataset.selectionId = id;
+                nodeRange.surroundContents(mark);
+            });
+        } catch (e) {
+            console.warn('Could not highlight selection:', e);
         }
     }
 
-    document.getElementById('main').addEventListener('mouseup', () => {
-        const sel = window.getSelection();
-        const text = sel ? sel.toString().trim() : '';
-        if (text.length > 5) {
-            setSelectedText(text);
+    function removeHighlightMark(id) {
+        // PDF: remove class from spans
+        document.querySelectorAll(`.reader-highlight-pdf[data-selection-id="${id}"]`).forEach(span => {
+            span.classList.remove('reader-highlight-pdf');
+            delete span.dataset.selectionId;
+        });
+        // EPUB: unwrap <mark> elements
+        document.querySelectorAll(`mark.reader-highlight[data-selection-id="${id}"]`).forEach(mark => {
+            const parent = mark.parentNode;
+            while (mark.firstChild) {
+                parent.insertBefore(mark.firstChild, mark);
+            }
+            parent.removeChild(mark);
+            parent.normalize();
+        });
+    }
+
+    // ===== Floating Explain Button =====
+    const explainPopup = document.getElementById('explainPopup');
+    const explainBtn = document.getElementById('explainBtn');
+    let _pendingSelectionText = '';
+    let _pendingSelectionRange = null;
+
+    function showExplainButton(selection) {
+        if (!selection || selection.rangeCount === 0) return;
+        const range = selection.getRangeAt(0);
+        _pendingSelectionRange = range.cloneRange();
+        const rect = range.getBoundingClientRect();
+        const mainEl = document.getElementById('main');
+        const mainRect = mainEl.getBoundingClientRect();
+        const scrollTop = mainEl.scrollTop;
+
+        const top = rect.top - mainRect.top + scrollTop - 40;
+        const left = rect.left - mainRect.left + (rect.width / 2);
+
+        explainPopup.style.top = top + 'px';
+        explainPopup.style.left = left + 'px';
+        explainPopup.style.transform = 'translateX(-50%)';
+        explainPopup.classList.add('visible');
+
+        _pendingSelectionText = selection.toString().trim();
+    }
+
+    function hideExplainButton() {
+        explainPopup.classList.remove('visible');
+        _pendingSelectionText = '';
+        _pendingSelectionRange = null;
+    }
+
+    document.getElementById('main').addEventListener('scroll', hideExplainButton);
+    document.addEventListener('mousedown', (e) => {
+        if (!e.target.closest('.explain-popup')) {
+            hideExplainButton();
         }
     });
 
-    selectionQuoteDismiss.addEventListener('click', () => {
-        setSelectedText('');
+    document.getElementById('main').addEventListener('mouseup', (e) => {
+        if (e.target.closest('.explain-popup')) return;
+        const sel = window.getSelection();
+        const text = sel ? sel.toString().trim() : '';
+        if (text.length > 5) {
+            showExplainButton(sel);
+        }
+    });
+
+    explainBtn.addEventListener('click', () => {
+        const text = _pendingSelectionText;
+        const range = _pendingSelectionRange;
+        if (!text) { hideExplainButton(); return; }
+
+        // Add as selection chip
+        const selId = addSelection(text);
+
+        // Highlight in book text using the saved range
+        if (selId !== null) {
+            addHighlightMark(selId, range);
+        }
+
+        hideExplainButton();
         window.getSelection()?.removeAllRanges();
+
+        // Open chat sidebar & pre-fill
+        setChat(true);
+        chatInput.value = 'Can you explain this section to me in more detail';
+        chatInput.focus();
+        chatInput.dispatchEvent(new Event('input'));
     });
 
     // ===== Chat Sidebar =====
@@ -1508,7 +1756,10 @@
             const data = await resp.json();
             if (data.history && data.history.length > 0) {
                 chatEmpty.style.display = 'none';
-                data.history.forEach(msg => appendMessage(msg.role, msg.content, msg.chapter, msg.selected_text));
+                data.history.forEach(msg => {
+                    const sel = msg.selected_texts || msg.selected_text;
+                    appendMessage(msg.role, msg.content, msg.chapter, sel);
+                });
             }
         } catch(e) { /* ignore */ }
     }
@@ -1524,7 +1775,10 @@
             html += `<span class="context-badge">Pg. ${chapter + 1}</span>`;
         }
         if (role === 'user' && quotedText) {
-            html += `<span class="quote-block">${escapeHtml(quotedText)}</span>`;
+            const quotes = Array.isArray(quotedText) ? quotedText : [quotedText];
+            quotes.forEach(q => {
+                if (q) html += `<span class="quote-block">${escapeHtml(q)}</span>`;
+            });
         }
         html += escapeHtml(content);
         div.innerHTML = html;
@@ -1560,8 +1814,8 @@
         const text = chatInput.value.trim();
         if (!text) return;
 
-        const quoteContext = selectedText;
-        setSelectedText('');
+        const quoteContexts = selectedTexts.map(s => s.text);
+        clearAllSelections();
 
         // Create a conversation on first send if none exists
         if (!currentConvId) {
@@ -1577,7 +1831,7 @@
 
         chatInput.value = '';
         chatInput.style.height = 'auto';
-        appendMessage('user', text, undefined, quoteContext);
+        appendMessage('user', text, undefined, quoteContexts);
         chatSendBtn.disabled = true;
         chatMessages.appendChild(chatTyping); // move indicator right after user msg
         chatTyping.classList.add('active');
@@ -1591,7 +1845,7 @@
                     book_id: BOOK_ID,
                     chapter_index: currentChapterIndex,
                     message: text,
-                    selected_text: quoteContext || undefined,
+                    selected_texts: quoteContexts.length > 0 ? quoteContexts : undefined,
                     conv_id: currentConvId,
                     model_override: _currentChatModel || undefined,
                 })

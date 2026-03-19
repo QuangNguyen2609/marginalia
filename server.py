@@ -181,7 +181,12 @@ async def chat_endpoint(request: Request):
     book_id = body.get("book_id")
     chapter_index = body.get("chapter_index", 0)
     user_message = body.get("message", "").strip()
-    selected_text = body.get("selected_text", "").strip()
+    selected_texts_raw = body.get("selected_texts") or []
+    if not selected_texts_raw:
+        # Backward compatibility: single string
+        single = body.get("selected_text", "").strip()
+        selected_texts_raw = [single] if single else []
+    selected_texts = [t.strip() for t in selected_texts_raw if isinstance(t, str) and t.strip()]
     conv_id = body.get("conv_id")
     model_override = body.get("model_override", "").strip() or None
 
@@ -216,12 +221,18 @@ async def chat_endpoint(request: Request):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history[-10:]:
         content = msg["content"]
-        if msg["role"] == "user" and msg.get("selected_text"):
-            content = f'[Highlighted passage: "{msg["selected_text"]}"]\n\n{content}'
+        if msg["role"] == "user":
+            passages = msg.get("selected_texts") or []
+            if not passages and msg.get("selected_text"):
+                passages = [msg["selected_text"]]
+            if passages:
+                prefix = "\n".join(f'[Highlighted passage {i+1}: "{p}"]' for i, p in enumerate(passages))
+                content = f'{prefix}\n\n{content}'
         messages.append({"role": msg["role"], "content": content})
     user_content = user_message
-    if selected_text:
-        user_content = f'[Highlighted passage: "{selected_text}"]\n\n{user_message}'
+    if selected_texts:
+        prefix = "\n".join(f'[Highlighted passage {i+1}: "{t}"]' for i, t in enumerate(selected_texts))
+        user_content = f'{prefix}\n\n{user_message}'
     messages.append({"role": "user", "content": user_content})
 
     async def generate():
@@ -238,8 +249,8 @@ async def chat_endpoint(request: Request):
         response_text = "".join(tokens)
         now = datetime.now().isoformat()
         user_entry = {"role": "user", "content": user_message, "chapter": chapter_index, "timestamp": now}
-        if selected_text:
-            user_entry["selected_text"] = selected_text
+        if selected_texts:
+            user_entry["selected_texts"] = selected_texts
         history.append(user_entry)
         history.append({"role": "assistant", "content": response_text, "chapter": chapter_index, "timestamp": now})
         save_chat_history(book_id, history, conv_id)
