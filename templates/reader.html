@@ -1988,45 +1988,76 @@
     let baseMaxWidth = 860; // fallback
 
     let reRenderTimer = null;
+    let reRenderGeneration = 0;
 
-    // Scroll-anchored layout change: finds the page at viewport center,
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function setScrollTopInstant(top) {
+        const previousScrollBehavior = mainEl.style.scrollBehavior;
+        mainEl.style.scrollBehavior = 'auto';
+        mainEl.scrollTop = clamp(top, 0, Math.max(0, mainEl.scrollHeight - mainEl.clientHeight));
+        void mainEl.offsetHeight;
+        mainEl.style.scrollBehavior = previousScrollBehavior;
+    }
+
+    function createRenderCanvas(viewport, aspectRatio) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        canvas.style.aspectRatio = aspectRatio;
+        return canvas;
+    }
+
+    function findScrollAnchor(scrollCenter, mainRect) {
+        let fallback = null;
+        const candidates = contentContainer.querySelectorAll('.pdf-page-wrapper, .pdf-page-placeholder');
+        for (const el of candidates) {
+            const rect = el.getBoundingClientRect();
+            const height = rect.height;
+            if (height === 0) continue;
+
+            const top = rect.top - mainRect.top + mainEl.scrollTop;
+            const bottom = top + height;
+
+            if (scrollCenter >= top && scrollCenter <= bottom) {
+                return { el, ratio: clamp((scrollCenter - top) / height, 0, 1) };
+            }
+
+            const distance = scrollCenter < top ? top - scrollCenter : scrollCenter - bottom;
+            const ratio = scrollCenter < top ? 0 : 1;
+            if (!fallback || distance < fallback.distance) {
+                fallback = { el, ratio, distance };
+            }
+        }
+        return fallback ? { el: fallback.el, ratio: fallback.ratio } : null;
+    }
+
+    // Scroll-anchored layout change: finds the page nearest the viewport center,
     // runs a callback that changes layout, then corrects scrollTop synchronously.
     function withScrollAnchor(layoutChange) {
         const viewH = mainEl.clientHeight;
         const mainRect = mainEl.getBoundingClientRect();
         const scrollCenter = mainEl.scrollTop + viewH / 2;
 
-        // Find anchor: the page element whose offset range contains scrollCenter
-        let anchorEl = null, anchorRatio = 0;
-        const candidates = contentContainer.querySelectorAll('.pdf-page-wrapper, .pdf-page-placeholder');
-        for (const el of candidates) {
-            const rect = el.getBoundingClientRect();
-            const height = rect.height;
-            if (height === 0) continue;
-            // Convert viewport-relative rect to scroll-relative position
-            const top = rect.top - mainRect.top + mainEl.scrollTop;
-            if (top + height > scrollCenter) {
-                anchorEl = el;
-                anchorRatio = (scrollCenter - top) / height;
-                break;
-            }
-        }
+        const anchor = findScrollAnchor(scrollCenter, mainRect);
 
         // Run the layout change
         layoutChange();
 
-        if (!anchorEl) return;
+        if (!anchor) return;
 
         // Force synchronous reflow so measurements below reflect new layout
         void contentContainer.offsetHeight;
 
         // Recompute anchor position after layout change using getBoundingClientRect
         const newMainRect = mainEl.getBoundingClientRect();
-        const newRect = anchorEl.getBoundingClientRect();
+        const newRect = anchor.el.getBoundingClientRect();
         const newTop = newRect.top - newMainRect.top + mainEl.scrollTop;
         const newHeight = newRect.height || 1;
 
-        mainEl.scrollTop = newTop + newHeight * anchorRatio - viewH / 2;
+        setScrollTopInstant(newTop + newHeight * anchor.ratio - viewH / 2);
     }
 
     function applyZoom() {
@@ -2040,8 +2071,9 @@
 
         // Debounce the expensive canvas re-render for sharpness
         clearTimeout(reRenderTimer);
+        const renderGeneration = ++reRenderGeneration;
         reRenderTimer = setTimeout(() => {
-            withScrollAnchor(() => { reRenderAllPages(); });
+            reRenderAllPages(renderGeneration);
         }, 400);
     }
 
@@ -2056,10 +2088,10 @@
         const renderScale = cssScale * dpr;
         const viewport = page.getViewport({ scale: renderScale });
         const cssViewport = page.getViewport({ scale: cssScale });
+        const aspectRatio = `${unscaled.width} / ${unscaled.height}`;
+        const textContentPromise = page.getTextContent().catch(() => null);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(viewport.width);
-        canvas.height = Math.round(viewport.height);
+        const canvas = createRenderCanvas(viewport, aspectRatio);
 
         const textLayerDiv = document.createElement('div');
         textLayerDiv.className = 'textLayer';
@@ -2072,12 +2104,13 @@
         wrapper.appendChild(textLayerDiv);
         placeholder.replaceWith(wrapper);
 
-        renderedPages.set(pageNum, { wrapper, page });
+        renderedPages.set(pageNum, { wrapper, page, textContentPromise, aspectRatio });
 
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
         try {
-            const textContent = await page.getTextContent();
+            const textContent = await textContentPromise;
+            if (!textContent) return;
             pdfjsLib.renderTextLayer({
                 textContentSource: textContent,
                 container: textLayerDiv,
@@ -2087,44 +2120,47 @@
         } catch(e) { /* text layer optional */ }
     }
 
-    function reRenderAllPages() {
-        // Phase 1 (synchronous): resize all canvases so layout settles in one reflow.
-        // Phase 2 (async): re-paint pixels and text layers — no layout change.
+    function reRenderAllPages(renderGeneration) {
+        // Keep the current canvas visible while rendering a sharper replacement off-DOM,
+        // then swap it in once ready to avoid a visible "refresh" flash.
         const dpr = window.devicePixelRatio || 1;
         const jobs = [];
 
-        renderedPages.forEach(({ wrapper, page }, pageNum) => {
-            const canvas = wrapper.querySelector('canvas');
-            if (!canvas) return;
+        renderedPages.forEach(({ wrapper, page, textContentPromise, aspectRatio }, pageNum) => {
+            const currentCanvas = wrapper.querySelector('canvas');
+            if (!currentCanvas) return;
             const containerWidth = wrapper.offsetWidth || contentContainer.offsetWidth || 800;
             const unscaled = page.getViewport({ scale: 1 });
             const cssScale = containerWidth / unscaled.width;
             const renderScale = cssScale * dpr;
             const viewport = page.getViewport({ scale: renderScale });
             const cssViewport = page.getViewport({ scale: cssScale });
+            const nextCanvas = createRenderCanvas(viewport, aspectRatio);
 
-            // Synchronous: set canvas intrinsic size (clears canvas but fixes layout)
-            canvas.width = Math.round(viewport.width);
-            canvas.height = Math.round(viewport.height);
-
-            jobs.push({ canvas, wrapper, page, viewport, cssViewport, cssScale });
+            jobs.push({ currentCanvas, nextCanvas, wrapper, page, viewport, cssViewport, cssScale, textContentPromise });
         });
 
-        // Phase 2: async pixel rendering (no layout shifts)
-        for (const { canvas, wrapper, page, viewport, cssViewport, cssScale } of jobs) {
-            page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise.then(() => {
+        for (const { currentCanvas, nextCanvas, wrapper, page, viewport, cssViewport, cssScale, textContentPromise } of jobs) {
+            page.render({ canvasContext: nextCanvas.getContext('2d'), viewport }).promise.then(async () => {
+                if (renderGeneration !== reRenderGeneration) return;
+                if (!currentCanvas.isConnected || !wrapper.isConnected) return;
+                if (wrapper.querySelector('canvas') !== currentCanvas) return;
+
+                currentCanvas.replaceWith(nextCanvas);
+
                 const tl = wrapper.querySelector('.textLayer');
                 if (tl) {
+                    if (renderGeneration !== reRenderGeneration) return;
                     tl.innerHTML = '';
                     tl.style.setProperty('--scale-factor', cssScale);
-                    page.getTextContent().then(tc => {
-                        pdfjsLib.renderTextLayer({
-                            textContentSource: tc,
-                            container: tl,
-                            viewport: cssViewport,
-                            textDivs: [],
-                        });
-                    }).catch(() => {});
+                    const textContent = await textContentPromise;
+                    if (!textContent || renderGeneration !== reRenderGeneration) return;
+                    pdfjsLib.renderTextLayer({
+                        textContentSource: textContent,
+                        container: tl,
+                        viewport: cssViewport,
+                        textDivs: [],
+                    });
                 }
             }).catch(() => {});
         }
